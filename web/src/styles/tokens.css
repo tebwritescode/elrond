@@ -1,0 +1,30 @@
+:root {
+  color-scheme: light;
+  --paper: #f3f0e8;
+  --paper-deep: #e9e4d9;
+  --surface: #fbfaf6;
+  --surface-raised: #ffffff;
+  --ink: #1e2825;
+  --ink-muted: #65706b;
+  --ink-faint: #8c948f;
+  --line: #dcd8cd;
+  --line-strong: #c8c2b5;
+  --forest: #245647;
+  --forest-deep: #183d33;
+  --forest-soft: #dce8e1;
+  --amber: #a26028;
+  --amber-soft: #f5e7d5;
+  --sidebar: #1d2926;
+  --sidebar-muted: #9baaa4;
+  --sidebar-line: #33413d;
+  --shadow: 0 18px 50px rgb(31 39 36 / 7%);
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+  --font-ui: "Aptos", "Segoe UI Variable", "Segoe UI", sans-serif;
+  --font-editorial: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Georgia, serif;
+}
+
+* {
+  box-sizing: border-box;
+}

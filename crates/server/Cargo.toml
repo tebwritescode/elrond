@@ -1,0 +1,18 @@
+[package]
+name = "elrond-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+axum.workspace = true
+dotenvy.workspace = true
+elrond-api = { path = "../api" }
+elrond-application = { path = "../application" }
+elrond-infrastructure = { path = "../infrastructure" }
+tokio.workspace = true
+tower-http.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
