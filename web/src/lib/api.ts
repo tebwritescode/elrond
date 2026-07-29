@@ -13,6 +13,13 @@ export type SessionUser = {
   role: string;
 };
 
+export type ImportSummary = {
+  categoriesCreated: number;
+  documentsImported: number;
+  duplicatesSkipped: number;
+  unsupportedSkipped: number;
+};
+
 export async function fetchOverview(signal?: AbortSignal): Promise<LibraryOverview> {
   const response = await fetch("/api/v1/overview", {
     headers: { Accept: "application/json" },
@@ -70,4 +77,22 @@ export async function login(username: string, password: string): Promise<void> {
 export async function logout(): Promise<void> {
   const response = await fetch("/api/v1/session", { method: "DELETE" });
   if (!response.ok) throw new Error("Sign out failed.");
+}
+
+export async function importZipArchive(
+  archive: File,
+  rootCategory: string,
+): Promise<ImportSummary> {
+  const form = new FormData();
+  form.append("archive", archive);
+  form.append("rootCategory", rootCategory);
+  const response = await fetch("/api/v1/imports/zip", {
+    method: "POST",
+    body: form,
+  });
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(body?.error ?? "The ZIP archive could not be imported.");
+  }
+  return response.json() as Promise<ImportSummary>;
 }

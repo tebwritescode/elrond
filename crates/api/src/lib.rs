@@ -1,13 +1,13 @@
 use axum::{
     Json, Router,
-    extract::State,
+    extract::{DefaultBodyLimit, Multipart, State},
     http::{
         HeaderMap, HeaderValue, StatusCode,
         header::{COOKIE, SET_COOKIE},
     },
     routing::{get, post},
 };
-use elrond_application::{AuthError, AuthService, LibraryService};
+use elrond_application::{AuthError, AuthService, ImportError, ImportService, LibraryService};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -15,6 +15,7 @@ use serde_json::{Value, json};
 pub struct ApiState {
     pub library: LibraryService,
     pub auth: AuthService,
+    pub imports: ImportService,
     pub secure_cookies: bool,
 }
 
@@ -26,6 +27,10 @@ pub fn router(state: ApiState) -> Router {
         .route(
             "/api/v1/session",
             get(current_session).post(login).delete(logout),
+        )
+        .route(
+            "/api/v1/imports/zip",
+            post(import_zip).layer(DefaultBodyLimit::max(256 * 1024 * 1024)),
         )
         .with_state(state)
 }
@@ -124,6 +129,78 @@ async fn logout(
     session_cookie_headers("", 0, state.secure_cookies)
 }
 
+async fn import_zip(
+    State(state): State<ApiState>,
+    headers: HeaderMap,
+    mut multipart: Multipart,
+) -> Result<Json<impl Serialize>, (StatusCode, Json<Value>)> {
+    let token = session_token(&headers).ok_or_else(unauthorized_response)?;
+    let user = state
+        .auth
+        .current_user(token)
+        .await
+        .map_err(auth_error_response)?
+        .ok_or_else(unauthorized_response)?;
+    let mut archive_bytes = None;
+    let mut root_category = "Imported".to_owned();
+
+    while let Some(field) = multipart.next_field().await.map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "The upload form could not be read." })),
+        )
+    })? {
+        match field.name() {
+            Some("archive") => {
+                let filename_is_zip = field
+                    .file_name()
+                    .map(|name| name.to_ascii_lowercase().ends_with(".zip"))
+                    .unwrap_or(false);
+                if !filename_is_zip {
+                    return Err((
+                        StatusCode::UNPROCESSABLE_ENTITY,
+                        Json(json!({ "error": "Choose a ZIP archive to import." })),
+                    ));
+                }
+                archive_bytes = Some(
+                    field
+                        .bytes()
+                        .await
+                        .map_err(|_| {
+                            (
+                                StatusCode::BAD_REQUEST,
+                                Json(json!({ "error": "The ZIP archive could not be read." })),
+                            )
+                        })?
+                        .to_vec(),
+                );
+            }
+            Some("rootCategory") => {
+                root_category = field.text().await.map_err(|_| {
+                    (
+                        StatusCode::BAD_REQUEST,
+                        Json(json!({ "error": "The root category could not be read." })),
+                    )
+                })?;
+            }
+            _ => {}
+        }
+    }
+
+    let archive_bytes = archive_bytes.ok_or_else(|| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "A ZIP archive is required." })),
+        )
+    })?;
+    state
+        .imports
+        .import_zip(archive_bytes, &root_category, &user.id)
+        .await
+        .map(Json)
+        .map_err(import_error_response)
+}
+
 fn session_cookie_headers(
     token: &str,
     max_age: i64,
@@ -164,6 +241,31 @@ fn auth_error_response(error: AuthError) -> (StatusCode, Json<Value>) {
         AuthError::InvalidCredentials => StatusCode::UNAUTHORIZED,
         AuthError::PasswordHash | AuthError::SessionGeneration | AuthError::Repository(_) => {
             tracing::error!(error = %error, "administrator setup failed");
+            StatusCode::INTERNAL_SERVER_ERROR
+        }
+    };
+    (status, Json(json!({ "error": error.to_string() })))
+}
+
+fn unauthorized_response() -> (StatusCode, Json<Value>) {
+    (
+        StatusCode::UNAUTHORIZED,
+        Json(json!({ "error": "Sign in to continue." })),
+    )
+}
+
+fn import_error_response(error: ImportError) -> (StatusCode, Json<Value>) {
+    let status = match error {
+        ImportError::TooManyEntries
+        | ImportError::ExpandedSizeLimit
+        | ImportError::FileSizeLimit => StatusCode::PAYLOAD_TOO_LARGE,
+        ImportError::InvalidArchive
+        | ImportError::UnsafeEntry
+        | ImportError::InvalidFileType
+        | ImportError::DepthLimit
+        | ImportError::Extraction => StatusCode::UNPROCESSABLE_ENTITY,
+        ImportError::Repository(_) => {
+            tracing::error!(error = %error, "ZIP import failed");
             StatusCode::INTERNAL_SERVER_ERROR
         }
     };

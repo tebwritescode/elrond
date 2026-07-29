@@ -2,7 +2,7 @@ use std::{env, net::SocketAddr, path::Path, sync::Arc};
 
 use axum::Router;
 use elrond_api::ApiState;
-use elrond_application::{AuthService, LibraryService};
+use elrond_application::{AuthService, ImportService, LibraryService};
 use elrond_infrastructure::sqlite::SqliteLibraryRepository;
 use tower_http::{
     compression::CompressionLayer,
@@ -21,12 +21,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let database_url = env::var("ELROND_DATABASE_URL")
         .unwrap_or_else(|_| format!("sqlite://{data_dir}/elrond.db?mode=rwc"));
-    let repository = Arc::new(SqliteLibraryRepository::connect(&database_url).await?);
+    let repository = Arc::new(SqliteLibraryRepository::connect(&database_url, &data_dir).await?);
     let stirling_configured = env::var("STIRLING_URL")
         .map(|value| !value.trim().is_empty())
         .unwrap_or(false);
     let library = LibraryService::new(repository.clone(), stirling_configured);
-    let auth = AuthService::new(repository);
+    let auth = AuthService::new(repository.clone());
+    let imports = ImportService::new(repository);
     let secure_cookies = env::var("ELROND_SECURE_COOKIES")
         .map(|value| value.eq_ignore_ascii_case("true"))
         .unwrap_or(false);
@@ -39,6 +40,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .merge(elrond_api::router(ApiState {
             library,
             auth,
+            imports,
             secure_cookies,
         }))
         .fallback_service(static_files)

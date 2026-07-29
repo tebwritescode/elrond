@@ -1,17 +1,27 @@
+use std::{collections::HashMap, path::PathBuf};
+
 use async_trait::async_trait;
-use elrond_application::{ApplicationError, AuthError, AuthRepository, LibraryRepository};
+use elrond_application::{
+    ApplicationError, AuthError, AuthRepository, ImportError, ImportRepository, LibraryRepository,
+};
 use elrond_domain::{
     auth::{AuthenticatedUser, InitialAdmin, NewSession, UserCredentials},
+    imports::{ImportSummary, PreparedImport},
     library::LibraryOverview,
 };
-use sqlx::{SqlitePool, sqlite::SqlitePoolOptions};
+use sqlx::{Sqlite, SqlitePool, Transaction, sqlite::SqlitePoolOptions};
+use uuid::Uuid;
 
 pub struct SqliteLibraryRepository {
     pool: SqlitePool,
+    data_dir: PathBuf,
 }
 
 impl SqliteLibraryRepository {
-    pub async fn connect(database_url: &str) -> Result<Self, sqlx::Error> {
+    pub async fn connect(
+        database_url: &str,
+        data_dir: impl Into<PathBuf>,
+    ) -> Result<Self, sqlx::Error> {
         let pool = SqlitePoolOptions::new()
             .max_connections(5)
             .connect(database_url)
@@ -19,8 +29,186 @@ impl SqliteLibraryRepository {
 
         sqlx::migrate!("../../migrations").run(&pool).await?;
 
-        Ok(Self { pool })
+        Ok(Self {
+            pool,
+            data_dir: data_dir.into(),
+        })
     }
+}
+
+#[async_trait]
+impl ImportRepository for SqliteLibraryRepository {
+    async fn commit_import(
+        &self,
+        import: PreparedImport,
+        actor_user_id: &str,
+    ) -> Result<ImportSummary, ImportError> {
+        let originals_dir = self.data_dir.join("originals");
+        tokio::fs::create_dir_all(&originals_dir)
+            .await
+            .map_err(import_repository_error)?;
+
+        let mut transaction = self.pool.begin().await.map_err(import_repository_error)?;
+        let mut category_ids = HashMap::<Vec<String>, String>::new();
+        let mut categories_created = 0;
+        for path in &import.categories {
+            ensure_category_path(
+                &mut transaction,
+                path,
+                &mut category_ids,
+                &mut categories_created,
+            )
+            .await?;
+        }
+
+        let mut documents_imported = 0;
+        let mut duplicates_skipped = 0;
+        for document in import.documents {
+            let duplicate: bool = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM document_versions WHERE original_sha256 = ?)",
+            )
+            .bind(&document.sha256)
+            .fetch_one(&mut *transaction)
+            .await
+            .map_err(import_repository_error)?;
+            if duplicate {
+                duplicates_skipped += 1;
+                continue;
+            }
+
+            let storage_path = originals_dir
+                .join(&document.sha256[..2])
+                .join(&document.sha256);
+            if !tokio::fs::try_exists(&storage_path)
+                .await
+                .map_err(import_repository_error)?
+            {
+                let parent = storage_path.parent().ok_or(ImportError::UnsafeEntry)?;
+                tokio::fs::create_dir_all(parent)
+                    .await
+                    .map_err(import_repository_error)?;
+                tokio::fs::write(&storage_path, &document.content)
+                    .await
+                    .map_err(import_repository_error)?;
+            }
+
+            let category_id = category_ids
+                .get(&document.category_path)
+                .ok_or(ImportError::UnsafeEntry)?;
+            let document_id = Uuid::new_v4().to_string();
+            let version_id = Uuid::new_v4().to_string();
+            let storage_key = storage_path
+                .strip_prefix(&self.data_dir)
+                .unwrap_or(&storage_path)
+                .to_string_lossy()
+                .replace('\\', "/");
+            let is_pdf = document.media_type == "application/pdf";
+
+            sqlx::query("INSERT INTO documents (id, category_id, title) VALUES (?, ?, ?)")
+                .bind(&document_id)
+                .bind(category_id)
+                .bind(&document.title)
+                .execute(&mut *transaction)
+                .await
+                .map_err(import_repository_error)?;
+            sqlx::query(
+                "INSERT INTO document_versions (id, document_id, version_number, original_filename, original_sha256, original_storage_key, pdf_sha256, pdf_storage_key) VALUES (?, ?, 1, ?, ?, ?, ?, ?)",
+            )
+            .bind(version_id)
+            .bind(&document_id)
+            .bind(&document.filename)
+            .bind(&document.sha256)
+            .bind(&storage_key)
+            .bind(is_pdf.then_some(&document.sha256))
+            .bind(is_pdf.then_some(&storage_key))
+            .execute(&mut *transaction)
+            .await
+            .map_err(import_repository_error)?;
+            sqlx::query(
+                "INSERT INTO document_search (document_id, title, document_number, extracted_text) VALUES (?, ?, '', '')",
+            )
+            .bind(&document_id)
+            .bind(&document.title)
+            .execute(&mut *transaction)
+            .await
+            .map_err(import_repository_error)?;
+            documents_imported += 1;
+        }
+
+        let summary = ImportSummary {
+            categories_created,
+            documents_imported,
+            duplicates_skipped,
+            unsupported_skipped: import.unsupported_skipped,
+        };
+        let details = serde_json::to_string(&summary).map_err(import_repository_error)?;
+        sqlx::query(
+            "INSERT INTO audit_events (actor_user_id, action, subject_type, details_json) VALUES (?, 'import.zip', 'library', ?)",
+        )
+        .bind(actor_user_id)
+        .bind(details)
+        .execute(&mut *transaction)
+        .await
+        .map_err(import_repository_error)?;
+        transaction
+            .commit()
+            .await
+            .map_err(import_repository_error)?;
+
+        Ok(summary)
+    }
+}
+
+async fn ensure_category_path(
+    transaction: &mut Transaction<'_, Sqlite>,
+    path: &[String],
+    known: &mut HashMap<Vec<String>, String>,
+    created: &mut usize,
+) -> Result<String, ImportError> {
+    let mut parent_id: Option<String> = None;
+    for depth in 1..=path.len() {
+        let current_path = path[..depth].to_vec();
+        if let Some(existing) = known.get(&current_path) {
+            parent_id = Some(existing.clone());
+            continue;
+        }
+        let name = &path[depth - 1];
+        let existing: Option<String> = if let Some(parent) = &parent_id {
+            sqlx::query_scalar(
+                "SELECT id FROM categories WHERE parent_id = ? AND name = ? COLLATE NOCASE",
+            )
+            .bind(parent)
+            .bind(name)
+            .fetch_optional(&mut **transaction)
+            .await
+            .map_err(import_repository_error)?
+        } else {
+            sqlx::query_scalar(
+                "SELECT id FROM categories WHERE parent_id IS NULL AND name = ? COLLATE NOCASE",
+            )
+            .bind(name)
+            .fetch_optional(&mut **transaction)
+            .await
+            .map_err(import_repository_error)?
+        };
+        let id = if let Some(existing) = existing {
+            existing
+        } else {
+            let id = Uuid::new_v4().to_string();
+            sqlx::query("INSERT INTO categories (id, parent_id, name) VALUES (?, ?, ?)")
+                .bind(&id)
+                .bind(&parent_id)
+                .bind(name)
+                .execute(&mut **transaction)
+                .await
+                .map_err(import_repository_error)?;
+            *created += 1;
+            id
+        };
+        known.insert(current_path, id.clone());
+        parent_id = Some(id);
+    }
+    parent_id.ok_or(ImportError::UnsafeEntry)
 }
 
 #[async_trait]
@@ -166,4 +354,80 @@ fn repository_error(error: sqlx::Error) -> ApplicationError {
 
 fn auth_repository_error(error: sqlx::Error) -> AuthError {
     AuthError::Repository(Box::new(error))
+}
+
+fn import_repository_error(error: impl std::error::Error + Send + Sync + 'static) -> ImportError {
+    ImportError::Repository(Box::new(error))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use elrond_domain::imports::PreparedDocument;
+
+    #[tokio::test]
+    async fn commits_hierarchy_documents_and_immutable_originals() {
+        let directory = tempfile::tempdir().expect("temporary data directory should be created");
+        let database_path = directory
+            .path()
+            .join("elrond-test.db")
+            .to_string_lossy()
+            .replace('\\', "/");
+        let database_url = format!("sqlite://{database_path}?mode=rwc");
+        let repository = SqliteLibraryRepository::connect(&database_url, directory.path())
+            .await
+            .expect("test repository should connect");
+        sqlx::query(
+            "INSERT INTO users (id, username, password_hash, role) VALUES ('tester', 'tester', 'fixture', 'admin')",
+        )
+        .execute(&repository.pool)
+        .await
+        .expect("test user should be inserted");
+        let sha256 = "a".repeat(64);
+        let import = PreparedImport {
+            categories: vec![
+                vec!["Policies".into()],
+                vec!["Policies".into(), "HR".into()],
+            ],
+            documents: vec![PreparedDocument {
+                category_path: vec!["Policies".into(), "HR".into()],
+                filename: "leave.txt".into(),
+                title: "leave".into(),
+                media_type: "text/plain".into(),
+                sha256: sha256.clone(),
+                content: b"Controlled leave policy".to_vec(),
+            }],
+            unsupported_skipped: 0,
+        };
+
+        let summary = repository
+            .commit_import(import, "tester")
+            .await
+            .expect("valid import should commit");
+
+        assert_eq!(summary.categories_created, 2);
+        assert_eq!(summary.documents_imported, 1);
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM document_versions")
+                .fetch_one(&repository.pool)
+                .await
+                .expect("version count should load"),
+            1
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM audit_events")
+                .fetch_one(&repository.pool)
+                .await
+                .expect("audit count should load"),
+            1
+        );
+        assert!(
+            directory
+                .path()
+                .join("originals")
+                .join("aa")
+                .join(sha256)
+                .is_file()
+        );
+    }
 }

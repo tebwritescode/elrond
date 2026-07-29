@@ -10,6 +10,7 @@ type LoadState =
 
 type DashboardPageProps = {
   loadState: LoadState;
+  onImport: () => void;
   onSetupComplete: () => void;
 };
 
@@ -31,7 +32,7 @@ const starterActions = [
   },
 ];
 
-export function DashboardPage({ loadState, onSetupComplete }: DashboardPageProps) {
+export function DashboardPage({ loadState, onImport, onSetupComplete }: DashboardPageProps) {
   const [setupOpen, setSetupOpen] = useState(false);
   const overview = loadState.status === "ready" ? loadState.overview : undefined;
 
@@ -81,7 +82,7 @@ export function DashboardPage({ loadState, onSetupComplete }: DashboardPageProps
           </div>
           <div className="starter-list">
             {starterActions.map(({ icon: Icon, title, detail }, index) => (
-              <button className="starter-row" key={title} type="button">
+              <button className="starter-row" key={title} onClick={index === 0 ? onImport : undefined} type="button">
                 <span className="step-number">0{index + 1}</span>
                 <span className="starter-icon"><Icon size={20} strokeWidth={1.7} /></span>
                 <span className="starter-copy"><strong>{title}</strong><small>{detail}</small></span>
@@ -103,7 +104,7 @@ export function DashboardPage({ loadState, onSetupComplete }: DashboardPageProps
             <div className="empty-document"><FileCheck2 size={26} strokeWidth={1.4} /></div>
             <h3>A clean beginning</h3>
             <p>Uploads, approvals, binder releases, and other controlled changes will be recorded here.</p>
-            <button className="secondary-button" type="button"><Plus size={16} /> Add a document</button>
+            <button className="secondary-button" onClick={onImport} type="button"><Plus size={16} /> Import documents</button>
           </div>
         </section>
       </div>

@@ -18,6 +18,7 @@ type AppShellProps = {
   children: ReactNode;
   connectionStatus: "connected" | "reconnecting";
   currentUsername?: string;
+  onImport: () => void;
   onLogout: () => Promise<void>;
 };
 
@@ -29,7 +30,7 @@ const navigation = [
   { label: "Activity", icon: Activity },
 ];
 
-export function AppShell({ children, connectionStatus, currentUsername, onLogout }: AppShellProps) {
+export function AppShell({ children, connectionStatus, currentUsername, onImport, onLogout }: AppShellProps) {
   const [accountOpen, setAccountOpen] = useState(false);
   const initials = currentUsername?.slice(0, 2).toUpperCase() ?? "EL";
   return (
@@ -93,9 +94,9 @@ export function AppShell({ children, connectionStatus, currentUsername, onLogout
             <input placeholder="Search documents, numbers, text..." type="search" />
             <kbd>Ctrl K</kbd>
           </label>
-          <button className="upload-button" type="button">
+          <button className="upload-button" disabled={!currentUsername} onClick={onImport} type="button">
             <Upload size={17} strokeWidth={2} aria-hidden="true" />
-            Upload document
+            Import documents
           </button>
           <button
             aria-expanded={accountOpen}

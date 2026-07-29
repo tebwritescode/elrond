@@ -10,4 +10,10 @@ rust-version.workspace = true
 async-trait.workspace = true
 elrond-application = { path = "../application" }
 elrond-domain = { path = "../domain" }
+serde_json.workspace = true
 sqlx.workspace = true
+tokio.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

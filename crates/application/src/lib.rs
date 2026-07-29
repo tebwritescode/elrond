@@ -1,4 +1,7 @@
 use std::{
+    collections::BTreeSet,
+    io::{Cursor, Read},
+    path::Path,
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -7,12 +10,14 @@ use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier, password_ha
 use async_trait::async_trait;
 use elrond_domain::{
     auth::{AuthenticatedUser, InitialAdmin, NewSession, UserCredentials},
+    imports::{ImportSummary, PreparedDocument, PreparedImport},
     library::LibraryOverview,
 };
 use rand::TryRngCore;
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 use uuid::Uuid;
+use zip::ZipArchive;
 
 #[derive(Debug, Error)]
 pub enum ApplicationError {
@@ -35,6 +40,28 @@ pub enum AuthError {
     #[error("secure session generation failed")]
     SessionGeneration,
     #[error("account storage failed")]
+    Repository(#[source] Box<dyn std::error::Error + Send + Sync>),
+}
+
+#[derive(Debug, Error)]
+pub enum ImportError {
+    #[error("the ZIP archive is empty or invalid")]
+    InvalidArchive,
+    #[error("the ZIP archive contains too many entries")]
+    TooManyEntries,
+    #[error("the ZIP archive expands beyond the 1 GiB safety limit")]
+    ExpandedSizeLimit,
+    #[error("an archived file exceeds the 100 MiB safety limit")]
+    FileSizeLimit,
+    #[error("the ZIP archive contains an unsafe path or symbolic link")]
+    UnsafeEntry,
+    #[error("an archived file's content does not match its supported file type")]
+    InvalidFileType,
+    #[error("the ZIP archive contains folders nested more than 20 levels")]
+    DepthLimit,
+    #[error("archive extraction failed")]
+    Extraction,
+    #[error("the import could not be stored")]
     Repository(#[source] Box<dyn std::error::Error + Send + Sync>),
 }
 
@@ -66,6 +93,15 @@ pub trait AuthRepository: Send + Sync {
     async fn delete_session(&self, token_hash: &str) -> Result<(), AuthError>;
 }
 
+#[async_trait]
+pub trait ImportRepository: Send + Sync {
+    async fn commit_import(
+        &self,
+        import: PreparedImport,
+        actor_user_id: &str,
+    ) -> Result<ImportSummary, ImportError>;
+}
+
 #[derive(Clone)]
 pub struct LibraryService {
     repository: Arc<dyn LibraryRepository>,
@@ -81,6 +117,189 @@ pub struct CreatedSession {
 #[derive(Clone)]
 pub struct AuthService {
     repository: Arc<dyn AuthRepository>,
+}
+
+#[derive(Clone)]
+pub struct ImportService {
+    repository: Arc<dyn ImportRepository>,
+}
+
+impl ImportService {
+    const MAX_ENTRIES: usize = 10_000;
+    const MAX_FILE_BYTES: u64 = 100 * 1024 * 1024;
+    const MAX_EXPANDED_BYTES: u64 = 1024 * 1024 * 1024;
+    const MAX_DEPTH: usize = 20;
+
+    pub fn new(repository: Arc<dyn ImportRepository>) -> Self {
+        Self { repository }
+    }
+
+    pub async fn import_zip(
+        &self,
+        archive_bytes: Vec<u8>,
+        root_category: &str,
+        actor_user_id: &str,
+    ) -> Result<ImportSummary, ImportError> {
+        let root_category = root_category.to_owned();
+        let prepared =
+            tokio::task::spawn_blocking(move || Self::prepare_zip(archive_bytes, &root_category))
+                .await
+                .map_err(|_| ImportError::Extraction)??;
+        self.repository.commit_import(prepared, actor_user_id).await
+    }
+
+    fn prepare_zip(
+        archive_bytes: Vec<u8>,
+        root_category: &str,
+    ) -> Result<PreparedImport, ImportError> {
+        let mut archive =
+            ZipArchive::new(Cursor::new(archive_bytes)).map_err(|_| ImportError::InvalidArchive)?;
+        if archive.is_empty() {
+            return Err(ImportError::InvalidArchive);
+        }
+        if archive.len() > Self::MAX_ENTRIES {
+            return Err(ImportError::TooManyEntries);
+        }
+
+        let root_category = clean_category_name(root_category).unwrap_or_else(|| "Imported".into());
+        let mut expanded_bytes = 0_u64;
+        let mut categories = BTreeSet::new();
+        let mut documents = Vec::new();
+        let mut unsupported_skipped = 0;
+
+        for index in 0..archive.len() {
+            let mut entry = archive
+                .by_index(index)
+                .map_err(|_| ImportError::Extraction)?;
+            let path = entry
+                .enclosed_name()
+                .ok_or(ImportError::UnsafeEntry)?
+                .to_path_buf();
+            if entry
+                .unix_mode()
+                .is_some_and(|mode| mode & 0o170000 == 0o120000)
+                || entry.encrypted()
+            {
+                return Err(ImportError::UnsafeEntry);
+            }
+
+            let components: Vec<String> = path
+                .components()
+                .filter_map(|component| {
+                    clean_category_name(&component.as_os_str().to_string_lossy())
+                })
+                .collect();
+            if components.len() > Self::MAX_DEPTH + 1 {
+                return Err(ImportError::DepthLimit);
+            }
+            if components.first().is_some_and(|name| name == "__MACOSX") {
+                continue;
+            }
+
+            if entry.is_dir() {
+                if !components.is_empty() {
+                    categories.insert(components);
+                }
+                continue;
+            }
+
+            let filename = components.last().cloned().ok_or(ImportError::UnsafeEntry)?;
+            let extension = Path::new(&filename)
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .map(str::to_ascii_lowercase)
+                .unwrap_or_default();
+            let Some(media_type) = supported_media_type(&extension) else {
+                unsupported_skipped += 1;
+                continue;
+            };
+            if entry.size() > Self::MAX_FILE_BYTES {
+                return Err(ImportError::FileSizeLimit);
+            }
+            if entry.size() > 10 * 1024 * 1024
+                && entry.compressed_size() > 0
+                && entry.size() / entry.compressed_size() > 200
+            {
+                return Err(ImportError::ExpandedSizeLimit);
+            }
+            expanded_bytes = expanded_bytes
+                .checked_add(entry.size())
+                .ok_or(ImportError::ExpandedSizeLimit)?;
+            if expanded_bytes > Self::MAX_EXPANDED_BYTES {
+                return Err(ImportError::ExpandedSizeLimit);
+            }
+
+            let mut category_path = components[..components.len() - 1].to_vec();
+            if category_path.is_empty() {
+                category_path.push(root_category.clone());
+            }
+            for depth in 1..=category_path.len() {
+                categories.insert(category_path[..depth].to_vec());
+            }
+
+            let mut content = Vec::with_capacity(entry.size() as usize);
+            entry
+                .read_to_end(&mut content)
+                .map_err(|_| ImportError::Extraction)?;
+            if !content_matches_extension(&extension, &content) {
+                return Err(ImportError::InvalidFileType);
+            }
+            let sha256 = hex::encode(Sha256::digest(&content));
+            let title = Path::new(&filename)
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .unwrap_or(&filename)
+                .replace(['_', '-'], " ");
+            documents.push(PreparedDocument {
+                category_path,
+                filename,
+                title,
+                media_type: media_type.into(),
+                sha256,
+                content,
+            });
+        }
+
+        Ok(PreparedImport {
+            categories: categories.into_iter().collect(),
+            documents,
+            unsupported_skipped,
+        })
+    }
+}
+
+fn clean_category_name(name: &str) -> Option<String> {
+    let name = name.trim().trim_matches('.').trim();
+    (!name.is_empty()).then(|| name.chars().take(120).collect())
+}
+
+fn supported_media_type(extension: &str) -> Option<&'static str> {
+    match extension {
+        "pdf" => Some("application/pdf"),
+        "docx" => Some("application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
+        "xlsx" => Some("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
+        "pptx" => Some("application/vnd.openxmlformats-officedocument.presentationml.presentation"),
+        "odt" => Some("application/vnd.oasis.opendocument.text"),
+        "ods" => Some("application/vnd.oasis.opendocument.spreadsheet"),
+        "odp" => Some("application/vnd.oasis.opendocument.presentation"),
+        "txt" => Some("text/plain"),
+        "jpg" | "jpeg" => Some("image/jpeg"),
+        "png" => Some("image/png"),
+        "tif" | "tiff" => Some("image/tiff"),
+        _ => None,
+    }
+}
+
+fn content_matches_extension(extension: &str, content: &[u8]) -> bool {
+    match extension {
+        "pdf" => content.starts_with(b"%PDF-"),
+        "docx" | "xlsx" | "pptx" | "odt" | "ods" | "odp" => content.starts_with(b"PK"),
+        "jpg" | "jpeg" => content.starts_with(&[0xff, 0xd8, 0xff]),
+        "png" => content.starts_with(b"\x89PNG\r\n\x1a\n"),
+        "tif" | "tiff" => content.starts_with(b"II*\0") || content.starts_with(b"MM\0*"),
+        "txt" => std::str::from_utf8(content).is_ok(),
+        _ => false,
+    }
 }
 
 impl LibraryService {
@@ -224,9 +443,13 @@ fn unix_timestamp() -> Result<i64, AuthError> {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, Mutex};
+    use std::{
+        io::{Cursor, Write},
+        sync::{Arc, Mutex},
+    };
 
     use super::*;
+    use zip::{ZipWriter, write::SimpleFileOptions};
 
     #[derive(Default)]
     struct RecordingAuthRepository {
@@ -308,5 +531,60 @@ mod tests {
         assert_eq!(stored.1.token_hash.len(), 64);
         assert_ne!(created.token, stored.1.token_hash);
         assert_eq!(stored.0.id, stored.1.user_id);
+    }
+
+    #[test]
+    fn zip_folders_become_nested_categories() {
+        let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+        writer
+            .start_file("Policies/HR/leave_policy.txt", SimpleFileOptions::default())
+            .expect("test entry should start");
+        writer
+            .write_all(b"Controlled leave policy")
+            .expect("test content should write");
+        writer
+            .start_file("root_note.txt", SimpleFileOptions::default())
+            .expect("test entry should start");
+        writer
+            .write_all(b"Root note")
+            .expect("test content should write");
+        let bytes = writer
+            .finish()
+            .expect("test ZIP should finish")
+            .into_inner();
+
+        let prepared =
+            ImportService::prepare_zip(bytes, "Inbox").expect("valid test ZIP should be prepared");
+
+        assert!(prepared.categories.contains(&vec!["Policies".into()]));
+        assert!(
+            prepared
+                .categories
+                .contains(&vec!["Policies".into(), "HR".into()])
+        );
+        assert!(prepared.categories.contains(&vec!["Inbox".into()]));
+        assert_eq!(prepared.documents.len(), 2);
+        assert_eq!(prepared.documents[0].category_path, ["Policies", "HR"]);
+        assert_eq!(prepared.documents[1].category_path, ["Inbox"]);
+    }
+
+    #[test]
+    fn zip_import_rejects_content_disguised_as_pdf() {
+        let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+        writer
+            .start_file("Policies/not_a_pdf.pdf", SimpleFileOptions::default())
+            .expect("test entry should start");
+        writer
+            .write_all(b"not actually a PDF")
+            .expect("test content should write");
+        let bytes = writer
+            .finish()
+            .expect("test ZIP should finish")
+            .into_inner();
+
+        assert!(matches!(
+            ImportService::prepare_zip(bytes, "Imported"),
+            Err(ImportError::InvalidFileType)
+        ));
     }
 }
