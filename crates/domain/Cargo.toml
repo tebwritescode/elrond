@@ -1,0 +1,20 @@
+[package]
+name = "elrond-domain"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Elrond domain entities and workflow invariants. No I/O, no framework dependencies."
+
+[dependencies]
+serde.workspace = true
+thiserror.workspace = true
+time.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+
+[lints]
+workspace = true

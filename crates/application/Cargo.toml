@@ -1,0 +1,28 @@
+[package]
+name = "elrond-application"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Elrond use cases and the service interfaces its infrastructure must satisfy."
+
+[features]
+# Exposes in-memory fakes so the API crate can test handlers without SQLite.
+testing = []
+
+[dependencies]
+elrond-domain.workspace = true
+
+async-trait.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+time.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+elrond-application = { path = ".", features = ["testing"] }
+tokio = { workspace = true, features = ["rt", "macros"] }
+
+[lints]
+workspace = true

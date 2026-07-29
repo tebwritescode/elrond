@@ -1,0 +1,49 @@
+# Rust
+/target
+**/*.rs.bk
+
+# Node
+node_modules/
+web/dist/
+.vite/
+*.tsbuildinfo
+
+# Runtime data — never commit documents, databases, or generated PDFs
+/data/
+/dev-data/
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# Secrets and environment
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+*.p12
+secrets/
+.netrc
+
+# Logs and scratch
+*.log
+logs/
+/tmp/
+/scratch/
+
+# Test and tooling output
+coverage/
+playwright-report/
+test-results/
+storybook-static/
+blob-report/
+.playwright/
+
+# Editors and OS
+.DS_Store
+Thumbs.db
+.idea/
+*.swp
