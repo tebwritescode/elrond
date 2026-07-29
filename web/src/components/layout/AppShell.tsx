@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import {
   Activity,
   Archive,
@@ -17,6 +17,8 @@ import {
 type AppShellProps = {
   children: ReactNode;
   connectionStatus: "connected" | "reconnecting";
+  currentUsername?: string;
+  onLogout: () => Promise<void>;
 };
 
 const navigation = [
@@ -27,7 +29,9 @@ const navigation = [
   { label: "Activity", icon: Activity },
 ];
 
-export function AppShell({ children, connectionStatus }: AppShellProps) {
+export function AppShell({ children, connectionStatus, currentUsername, onLogout }: AppShellProps) {
+  const [accountOpen, setAccountOpen] = useState(false);
+  const initials = currentUsername?.slice(0, 2).toUpperCase() ?? "EL";
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -93,10 +97,22 @@ export function AppShell({ children, connectionStatus }: AppShellProps) {
             <Upload size={17} strokeWidth={2} aria-hidden="true" />
             Upload document
           </button>
-          <button className="profile-button" type="button" aria-label="Open account menu">
-            <span>EL</span>
+          <button
+            aria-expanded={accountOpen}
+            aria-label="Open account menu"
+            className="profile-button"
+            onClick={() => setAccountOpen((open) => !open)}
+            type="button"
+          >
+            <span>{initials}</span>
             <ChevronDown size={14} />
           </button>
+          {accountOpen && (
+            <div className="account-menu">
+              <div><small>Signed in as</small><strong>{currentUsername}</strong></div>
+              <button onClick={() => void onLogout()} type="button">Sign out</button>
+            </div>
+          )}
         </header>
         <main>{children}</main>
       </div>

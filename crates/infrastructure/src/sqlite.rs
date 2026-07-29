@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use elrond_application::{ApplicationError, AuthError, AuthRepository, LibraryRepository};
 use elrond_domain::{
-    auth::{InitialAdmin, NewSession},
+    auth::{AuthenticatedUser, InitialAdmin, NewSession, UserCredentials},
     library::LibraryOverview,
 };
 use sqlx::{SqlitePool, sqlite::SqlitePoolOptions};
@@ -99,6 +99,64 @@ impl AuthRepository for SqliteLibraryRepository {
             .map_err(auth_repository_error)?;
 
         transaction.commit().await.map_err(auth_repository_error)
+    }
+
+    async fn credentials_by_username(
+        &self,
+        username: &str,
+    ) -> Result<Option<UserCredentials>, AuthError> {
+        sqlx::query_as::<_, (String, String, String)>(
+            "SELECT id, username, password_hash FROM users WHERE username = ? COLLATE NOCASE",
+        )
+        .bind(username)
+        .fetch_optional(&self.pool)
+        .await
+        .map(|row| {
+            row.map(|(id, username, password_hash)| UserCredentials {
+                id,
+                username,
+                password_hash,
+            })
+        })
+        .map_err(auth_repository_error)
+    }
+
+    async fn create_session(&self, session: NewSession) -> Result<(), AuthError> {
+        sqlx::query("INSERT INTO sessions (token_hash, user_id, expires_at) VALUES (?, ?, ?)")
+            .bind(session.token_hash)
+            .bind(session.user_id)
+            .bind(session.expires_at)
+            .execute(&self.pool)
+            .await
+            .map(|_| ())
+            .map_err(auth_repository_error)
+    }
+
+    async fn user_by_session(
+        &self,
+        token_hash: &str,
+        now: i64,
+    ) -> Result<Option<AuthenticatedUser>, AuthError> {
+        sqlx::query_as::<_, (String, String, String)>(
+            "SELECT users.id, users.username, users.role FROM sessions JOIN users ON users.id = sessions.user_id WHERE sessions.token_hash = ? AND sessions.expires_at > ?",
+        )
+        .bind(token_hash)
+        .bind(now)
+        .fetch_optional(&self.pool)
+        .await
+        .map(|row| {
+            row.map(|(id, username, role)| AuthenticatedUser { id, username, role })
+        })
+        .map_err(auth_repository_error)
+    }
+
+    async fn delete_session(&self, token_hash: &str) -> Result<(), AuthError> {
+        sqlx::query("DELETE FROM sessions WHERE token_hash = ?")
+            .bind(token_hash)
+            .execute(&self.pool)
+            .await
+            .map(|_| ())
+            .map_err(auth_repository_error)
     }
 }
 

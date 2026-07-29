@@ -3,10 +3,10 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use argon2::{Argon2, PasswordHasher, password_hash::SaltString};
+use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier, password_hash::SaltString};
 use async_trait::async_trait;
 use elrond_domain::{
-    auth::{InitialAdmin, NewSession},
+    auth::{AuthenticatedUser, InitialAdmin, NewSession, UserCredentials},
     library::LibraryOverview,
 };
 use rand::TryRngCore;
@@ -28,6 +28,8 @@ pub enum AuthError {
     InvalidPassword,
     #[error("first-run setup has already been completed")]
     SetupCompleted,
+    #[error("the username or password is incorrect")]
+    InvalidCredentials,
     #[error("password hashing failed")]
     PasswordHash,
     #[error("secure session generation failed")]
@@ -51,6 +53,17 @@ pub trait AuthRepository: Send + Sync {
         admin: InitialAdmin,
         session: NewSession,
     ) -> Result<(), AuthError>;
+    async fn credentials_by_username(
+        &self,
+        username: &str,
+    ) -> Result<Option<UserCredentials>, AuthError>;
+    async fn create_session(&self, session: NewSession) -> Result<(), AuthError>;
+    async fn user_by_session(
+        &self,
+        token_hash: &str,
+        now: i64,
+    ) -> Result<Option<AuthenticatedUser>, AuthError>;
+    async fn delete_session(&self, token_hash: &str) -> Result<(), AuthError>;
 }
 
 #[derive(Clone)]
@@ -117,16 +130,8 @@ impl AuthService {
             .map_err(|_| AuthError::PasswordHash)?
             .to_string();
 
-        let mut session_bytes = [0_u8; 32];
-        rng.try_fill_bytes(&mut session_bytes)
-            .map_err(|_| AuthError::SessionGeneration)?;
-        let token = hex::encode(session_bytes);
-        let token_hash = hex::encode(Sha256::digest(token.as_bytes()));
         let user_id = Uuid::new_v4().to_string();
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_err(|_| AuthError::SessionGeneration)?
-            .as_secs() as i64;
+        let session = Self::new_session(&user_id)?;
 
         self.repository
             .create_initial_admin(
@@ -135,20 +140,86 @@ impl AuthService {
                     username: username.to_owned(),
                     password_hash,
                 },
-                NewSession {
-                    token_hash,
-                    user_id,
-                    expires_at: now + Self::SESSION_DURATION_SECONDS,
-                },
+                session.stored,
             )
             .await?;
 
         Ok(CreatedSession {
-            token,
+            token: session.token,
             username: username.to_owned(),
             max_age_seconds: Self::SESSION_DURATION_SECONDS,
         })
     }
+
+    pub async fn login(&self, username: &str, password: &str) -> Result<CreatedSession, AuthError> {
+        let credentials = self
+            .repository
+            .credentials_by_username(username.trim())
+            .await?
+            .ok_or(AuthError::InvalidCredentials)?;
+        let parsed_hash = PasswordHash::new(&credentials.password_hash)
+            .map_err(|_| AuthError::InvalidCredentials)?;
+        Argon2::default()
+            .verify_password(password.as_bytes(), &parsed_hash)
+            .map_err(|_| AuthError::InvalidCredentials)?;
+
+        let session = Self::new_session(&credentials.id)?;
+        self.repository.create_session(session.stored).await?;
+
+        Ok(CreatedSession {
+            token: session.token,
+            username: credentials.username,
+            max_age_seconds: Self::SESSION_DURATION_SECONDS,
+        })
+    }
+
+    pub async fn current_user(
+        &self,
+        session_token: &str,
+    ) -> Result<Option<AuthenticatedUser>, AuthError> {
+        self.repository
+            .user_by_session(&hash_session_token(session_token), unix_timestamp()?)
+            .await
+    }
+
+    pub async fn logout(&self, session_token: &str) -> Result<(), AuthError> {
+        self.repository
+            .delete_session(&hash_session_token(session_token))
+            .await
+    }
+
+    fn new_session(user_id: &str) -> Result<GeneratedSession, AuthError> {
+        let mut session_bytes = [0_u8; 32];
+        rand::rngs::OsRng
+            .try_fill_bytes(&mut session_bytes)
+            .map_err(|_| AuthError::SessionGeneration)?;
+        let token = hex::encode(session_bytes);
+
+        Ok(GeneratedSession {
+            stored: NewSession {
+                token_hash: hash_session_token(&token),
+                user_id: user_id.to_owned(),
+                expires_at: unix_timestamp()? + Self::SESSION_DURATION_SECONDS,
+            },
+            token,
+        })
+    }
+}
+
+struct GeneratedSession {
+    token: String,
+    stored: NewSession,
+}
+
+fn hash_session_token(token: &str) -> String {
+    hex::encode(Sha256::digest(token.as_bytes()))
+}
+
+fn unix_timestamp() -> Result<i64, AuthError> {
+    Ok(SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| AuthError::SessionGeneration)?
+        .as_secs() as i64)
 }
 
 #[cfg(test)]
@@ -173,6 +244,29 @@ mod tests {
                 .lock()
                 .expect("test repository lock should remain available")
                 .replace((admin, session));
+            Ok(())
+        }
+
+        async fn credentials_by_username(
+            &self,
+            _username: &str,
+        ) -> Result<Option<UserCredentials>, AuthError> {
+            Ok(None)
+        }
+
+        async fn create_session(&self, _session: NewSession) -> Result<(), AuthError> {
+            Ok(())
+        }
+
+        async fn user_by_session(
+            &self,
+            _token_hash: &str,
+            _now: i64,
+        ) -> Result<Option<AuthenticatedUser>, AuthError> {
+            Ok(None)
+        }
+
+        async fn delete_session(&self, _token_hash: &str) -> Result<(), AuthError> {
             Ok(())
         }
     }

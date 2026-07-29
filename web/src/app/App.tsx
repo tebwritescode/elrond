@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { AppShell } from "../components/layout/AppShell";
+import { LoginPage } from "../features/auth/LoginPage";
 import { DashboardPage } from "../features/dashboard/DashboardPage";
-import { fetchOverview, type LibraryOverview } from "../lib/api";
+import { fetchCurrentUser, fetchOverview, logout, type LibraryOverview, type SessionUser } from "../lib/api";
 
 type LoadState =
   | { status: "loading" }
@@ -10,6 +11,7 @@ type LoadState =
 
 export function App() {
   const [loadState, setLoadState] = useState<LoadState>({ status: "loading" });
+  const [currentUser, setCurrentUser] = useState<SessionUser | null>();
   const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
@@ -17,8 +19,11 @@ export function App() {
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
 
     const loadOverview = () => {
-      fetchOverview(controller.signal)
-        .then((overview) => setLoadState({ status: "ready", overview }))
+      Promise.all([fetchOverview(controller.signal), fetchCurrentUser(controller.signal)])
+        .then(([overview, user]) => {
+          setLoadState({ status: "ready", overview });
+          setCurrentUser(user);
+        })
         .catch((error: unknown) => {
           if (error instanceof DOMException && error.name === "AbortError") return;
           setLoadState({ status: "offline" });
@@ -34,8 +39,23 @@ export function App() {
     };
   }, [reloadKey]);
 
+  if (
+    loadState.status === "ready" &&
+    !loadState.overview.setupRequired &&
+    currentUser === null
+  ) {
+    return <LoginPage onLogin={() => setReloadKey((key) => key + 1)} />;
+  }
+
   return (
-    <AppShell connectionStatus={loadState.status === "offline" ? "reconnecting" : "connected"}>
+    <AppShell
+      connectionStatus={loadState.status === "offline" ? "reconnecting" : "connected"}
+      currentUsername={currentUser?.username}
+      onLogout={async () => {
+        await logout();
+        setCurrentUser(null);
+      }}
+    >
       <DashboardPage
         loadState={loadState}
         onSetupComplete={() => setReloadKey((key) => key + 1)}
