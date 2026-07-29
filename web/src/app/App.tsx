@@ -10,6 +10,7 @@ type LoadState =
 
 export function App() {
   const [loadState, setLoadState] = useState<LoadState>({ status: "loading" });
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -31,11 +32,14 @@ export function App() {
       controller.abort();
       if (retryTimer) clearTimeout(retryTimer);
     };
-  }, []);
+  }, [reloadKey]);
 
   return (
     <AppShell connectionStatus={loadState.status === "offline" ? "reconnecting" : "connected"}>
-      <DashboardPage loadState={loadState} />
+      <DashboardPage
+        loadState={loadState}
+        onSetupComplete={() => setReloadKey((key) => key + 1)}
+      />
     </AppShell>
   );
 }

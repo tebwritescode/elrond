@@ -2,7 +2,7 @@ use std::{env, net::SocketAddr, path::Path, sync::Arc};
 
 use axum::Router;
 use elrond_api::ApiState;
-use elrond_application::LibraryService;
+use elrond_application::{AuthService, LibraryService};
 use elrond_infrastructure::sqlite::SqliteLibraryRepository;
 use tower_http::{
     compression::CompressionLayer,
@@ -25,14 +25,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let stirling_configured = env::var("STIRLING_URL")
         .map(|value| !value.trim().is_empty())
         .unwrap_or(false);
-    let library = LibraryService::new(repository, stirling_configured);
+    let library = LibraryService::new(repository.clone(), stirling_configured);
+    let auth = AuthService::new(repository);
+    let secure_cookies = env::var("ELROND_SECURE_COOKIES")
+        .map(|value| value.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
 
     let web_dir = env::var("ELROND_WEB_DIR").unwrap_or_else(|_| "web/dist".to_owned());
     let index_path = Path::new(&web_dir).join("index.html");
     let static_files = ServeDir::new(&web_dir).fallback(ServeFile::new(index_path));
 
     let app = Router::new()
-        .merge(elrond_api::router(ApiState { library }))
+        .merge(elrond_api::router(ApiState {
+            library,
+            auth,
+            secure_cookies,
+        }))
         .fallback_service(static_files)
         .layer(CompressionLayer::new())
         .layer(TraceLayer::new_for_http());

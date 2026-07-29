@@ -1,6 +1,9 @@
 use async_trait::async_trait;
-use elrond_application::{ApplicationError, LibraryRepository};
-use elrond_domain::library::LibraryOverview;
+use elrond_application::{ApplicationError, AuthError, AuthRepository, LibraryRepository};
+use elrond_domain::{
+    auth::{InitialAdmin, NewSession},
+    library::LibraryOverview,
+};
 use sqlx::{SqlitePool, sqlite::SqlitePoolOptions};
 
 pub struct SqliteLibraryRepository {
@@ -60,6 +63,49 @@ impl LibraryRepository for SqliteLibraryRepository {
     }
 }
 
+#[async_trait]
+impl AuthRepository for SqliteLibraryRepository {
+    async fn create_initial_admin(
+        &self,
+        admin: InitialAdmin,
+        session: NewSession,
+    ) -> Result<(), AuthError> {
+        let mut transaction = self.pool.begin().await.map_err(auth_repository_error)?;
+        let users: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users")
+            .fetch_one(&mut *transaction)
+            .await
+            .map_err(auth_repository_error)?;
+
+        if users != 0 {
+            return Err(AuthError::SetupCompleted);
+        }
+
+        sqlx::query(
+            "INSERT INTO users (id, username, password_hash, role) VALUES (?, ?, ?, 'admin')",
+        )
+        .bind(&admin.id)
+        .bind(&admin.username)
+        .bind(&admin.password_hash)
+        .execute(&mut *transaction)
+        .await
+        .map_err(auth_repository_error)?;
+
+        sqlx::query("INSERT INTO sessions (token_hash, user_id, expires_at) VALUES (?, ?, ?)")
+            .bind(&session.token_hash)
+            .bind(&session.user_id)
+            .bind(session.expires_at)
+            .execute(&mut *transaction)
+            .await
+            .map_err(auth_repository_error)?;
+
+        transaction.commit().await.map_err(auth_repository_error)
+    }
+}
+
 fn repository_error(error: sqlx::Error) -> ApplicationError {
     ApplicationError::Repository(Box::new(error))
+}
+
+fn auth_repository_error(error: sqlx::Error) -> AuthError {
+    AuthError::Repository(Box::new(error))
 }

@@ -19,3 +19,19 @@ export async function fetchOverview(signal?: AbortSignal): Promise<LibraryOvervi
 
   return response.json() as Promise<LibraryOverview>;
 }
+
+export async function createInitialAdmin(username: string, password: string): Promise<void> {
+  const response = await fetch("/api/v1/setup", {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ username, password }),
+  });
+
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(body?.error ?? "The administrator account could not be created.");
+  }
+}

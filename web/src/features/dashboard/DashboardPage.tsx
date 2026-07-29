@@ -1,5 +1,7 @@
+import { useState } from "react";
 import { ArrowRight, BookOpen, FileCheck2, FileText, FolderTree, Plus, Sparkles } from "lucide-react";
 import type { LibraryOverview } from "../../lib/api";
+import { SetupDialog } from "../setup/SetupDialog";
 
 type LoadState =
   | { status: "loading" }
@@ -8,6 +10,7 @@ type LoadState =
 
 type DashboardPageProps = {
   loadState: LoadState;
+  onSetupComplete: () => void;
 };
 
 const starterActions = [
@@ -28,7 +31,8 @@ const starterActions = [
   },
 ];
 
-export function DashboardPage({ loadState }: DashboardPageProps) {
+export function DashboardPage({ loadState, onSetupComplete }: DashboardPageProps) {
+  const [setupOpen, setSetupOpen] = useState(false);
   const overview = loadState.status === "ready" ? loadState.overview : undefined;
 
   return (
@@ -55,7 +59,7 @@ export function DashboardPage({ loadState }: DashboardPageProps) {
             <h2>Make this library yours</h2>
             <p>Create the local administrator and choose the defaults used for document numbering and PDF processing.</p>
           </div>
-          <button type="button">Begin setup <ArrowRight size={16} /></button>
+          <button onClick={() => setSetupOpen(true)} type="button">Begin setup <ArrowRight size={16} /></button>
         </section>
       )}
 
@@ -108,6 +112,11 @@ export function DashboardPage({ loadState }: DashboardPageProps) {
         <span className={overview?.stirlingConfigured ? "healthy" : "pending"} />
         Stirling-PDF {overview?.stirlingConfigured ? "is configured" : "will be connected through environment settings"}
       </footer>
+      <SetupDialog
+        onClose={() => setSetupOpen(false)}
+        onComplete={onSetupComplete}
+        open={setupOpen}
+      />
     </div>
   );
 }
