@@ -2,7 +2,7 @@ use std::{env, net::SocketAddr, path::Path, sync::Arc};
 
 use axum::Router;
 use elrond_api::ApiState;
-use elrond_application::{AuthService, ImportService, LibraryService};
+use elrond_application::{AuthService, CatalogService, ImportService, LibraryService};
 use elrond_infrastructure::sqlite::SqliteLibraryRepository;
 use tower_http::{
     compression::CompressionLayer,
@@ -27,7 +27,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or(false);
     let library = LibraryService::new(repository.clone(), stirling_configured);
     let auth = AuthService::new(repository.clone());
-    let imports = ImportService::new(repository);
+    let imports = ImportService::new(repository.clone());
+    let catalog = CatalogService::new(repository);
     let secure_cookies = env::var("ELROND_SECURE_COOKIES")
         .map(|value| value.eq_ignore_ascii_case("true"))
         .unwrap_or(false);
@@ -41,6 +42,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             library,
             auth,
             imports,
+            catalog,
             secure_cookies,
         }))
         .fallback_service(static_files)

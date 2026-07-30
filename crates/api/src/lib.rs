@@ -7,7 +7,10 @@ use axum::{
     },
     routing::{get, post},
 };
-use elrond_application::{AuthError, AuthService, ImportError, ImportService, LibraryService};
+use elrond_application::{
+    AuthError, AuthService, CatalogError, CatalogService, ImportError, ImportService,
+    LibraryService,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -16,6 +19,7 @@ pub struct ApiState {
     pub library: LibraryService,
     pub auth: AuthService,
     pub imports: ImportService,
+    pub catalog: CatalogService,
     pub secure_cookies: bool,
 }
 
@@ -32,6 +36,8 @@ pub fn router(state: ApiState) -> Router {
             "/api/v1/imports/zip",
             post(import_zip).layer(DefaultBodyLimit::max(256 * 1024 * 1024)),
         )
+        .route("/api/v1/documents", get(documents))
+        .route("/api/v1/categories", get(categories))
         .with_state(state)
 }
 
@@ -201,6 +207,45 @@ async fn import_zip(
         .map_err(import_error_response)
 }
 
+async fn documents(
+    State(state): State<ApiState>,
+    headers: HeaderMap,
+) -> Result<Json<impl Serialize>, (StatusCode, Json<Value>)> {
+    authenticated_user(&state, &headers).await?;
+    state
+        .catalog
+        .documents()
+        .await
+        .map(Json)
+        .map_err(catalog_error_response)
+}
+
+async fn categories(
+    State(state): State<ApiState>,
+    headers: HeaderMap,
+) -> Result<Json<impl Serialize>, (StatusCode, Json<Value>)> {
+    authenticated_user(&state, &headers).await?;
+    state
+        .catalog
+        .categories()
+        .await
+        .map(Json)
+        .map_err(catalog_error_response)
+}
+
+async fn authenticated_user(
+    state: &ApiState,
+    headers: &HeaderMap,
+) -> Result<elrond_domain::auth::AuthenticatedUser, (StatusCode, Json<Value>)> {
+    let token = session_token(headers).ok_or_else(unauthorized_response)?;
+    state
+        .auth
+        .current_user(token)
+        .await
+        .map_err(auth_error_response)?
+        .ok_or_else(unauthorized_response)
+}
+
 fn session_cookie_headers(
     token: &str,
     max_age: i64,
@@ -270,6 +315,14 @@ fn import_error_response(error: ImportError) -> (StatusCode, Json<Value>) {
         }
     };
     (status, Json(json!({ "error": error.to_string() })))
+}
+
+fn catalog_error_response(error: CatalogError) -> (StatusCode, Json<Value>) {
+    tracing::error!(error = %error, "catalog request failed");
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(json!({ "error": error.to_string() })),
+    )
 }
 
 async fn health() -> Json<Value> {

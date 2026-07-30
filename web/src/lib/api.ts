@@ -20,6 +20,24 @@ export type ImportSummary = {
   unsupportedSkipped: number;
 };
 
+export type DocumentSummary = {
+  id: string;
+  title: string;
+  status: "draft" | "in_review" | "published" | "archived";
+  categoryName: string | null;
+  versionNumber: number;
+  originalFilename: string;
+  hasPdf: boolean;
+  updatedAt: string;
+};
+
+export type CategorySummary = {
+  id: string;
+  parentId: string | null;
+  name: string;
+  documentCount: number;
+};
+
 export async function fetchOverview(signal?: AbortSignal): Promise<LibraryOverview> {
   const response = await fetch("/api/v1/overview", {
     headers: { Accept: "application/json" },
@@ -95,4 +113,22 @@ export async function importZipArchive(
     throw new Error(body?.error ?? "The ZIP archive could not be imported.");
   }
   return response.json() as Promise<ImportSummary>;
+}
+
+export async function fetchDocuments(signal?: AbortSignal): Promise<DocumentSummary[]> {
+  const response = await fetch("/api/v1/documents", {
+    headers: { Accept: "application/json" },
+    signal,
+  });
+  if (!response.ok) throw new Error("The document catalog could not be loaded.");
+  return response.json() as Promise<DocumentSummary[]>;
+}
+
+export async function fetchCategories(signal?: AbortSignal): Promise<CategorySummary[]> {
+  const response = await fetch("/api/v1/categories", {
+    headers: { Accept: "application/json" },
+    signal,
+  });
+  if (!response.ok) throw new Error("The category tree could not be loaded.");
+  return response.json() as Promise<CategorySummary[]>;
 }

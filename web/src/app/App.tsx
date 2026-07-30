@@ -1,9 +1,21 @@
 import { useEffect, useState } from "react";
-import { AppShell } from "../components/layout/AppShell";
+import { AppShell, type WorkspaceSection } from "../components/layout/AppShell";
 import { LoginPage } from "../features/auth/LoginPage";
+import { CategoriesPage } from "../features/categories/CategoriesPage";
 import { DashboardPage } from "../features/dashboard/DashboardPage";
 import { ZipImportDialog } from "../features/imports/ZipImportDialog";
-import { fetchCurrentUser, fetchOverview, logout, type LibraryOverview, type SessionUser } from "../lib/api";
+import { LibraryPage } from "../features/library/LibraryPage";
+import {
+  fetchCategories,
+  fetchCurrentUser,
+  fetchDocuments,
+  fetchOverview,
+  logout,
+  type CategorySummary,
+  type DocumentSummary,
+  type LibraryOverview,
+  type SessionUser,
+} from "../lib/api";
 
 type LoadState =
   | { status: "loading" }
@@ -15,6 +27,11 @@ export function App() {
   const [currentUser, setCurrentUser] = useState<SessionUser | null>();
   const [reloadKey, setReloadKey] = useState(0);
   const [importOpen, setImportOpen] = useState(false);
+  const [activeSection, setActiveSection] = useState<WorkspaceSection>("overview");
+  const [query, setQuery] = useState("");
+  const [documents, setDocuments] = useState<DocumentSummary[]>([]);
+  const [categories, setCategories] = useState<CategorySummary[]>([]);
+  const [catalogLoading, setCatalogLoading] = useState(false);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -41,6 +58,25 @@ export function App() {
     };
   }, [reloadKey]);
 
+  useEffect(() => {
+    if (!currentUser) return;
+    const controller = new AbortController();
+    setCatalogLoading(true);
+    Promise.all([fetchDocuments(controller.signal), fetchCategories(controller.signal)])
+      .then(([loadedDocuments, loadedCategories]) => {
+        setDocuments(loadedDocuments);
+        setCategories(loadedCategories);
+      })
+      .catch((error: unknown) => {
+        if (!(error instanceof DOMException && error.name === "AbortError")) {
+          setDocuments([]);
+          setCategories([]);
+        }
+      })
+      .finally(() => setCatalogLoading(false));
+    return () => controller.abort();
+  }, [currentUser, reloadKey]);
+
   if (
     loadState.status === "ready" &&
     !loadState.overview.setupRequired &&
@@ -53,17 +89,36 @@ export function App() {
     <AppShell
       connectionStatus={loadState.status === "offline" ? "reconnecting" : "connected"}
       currentUsername={currentUser?.username}
+      activeSection={activeSection}
+      categories={categories}
+      documentCount={documents.length}
+      onNavigate={setActiveSection}
+      onQueryChange={setQuery}
+      query={query}
       onImport={() => setImportOpen(true)}
       onLogout={async () => {
         await logout();
         setCurrentUser(null);
       }}
     >
-      <DashboardPage
-        loadState={loadState}
-        onImport={() => setImportOpen(true)}
-        onSetupComplete={() => setReloadKey((key) => key + 1)}
-      />
+      {activeSection === "overview" && (
+        <DashboardPage
+          loadState={loadState}
+          onImport={() => setImportOpen(true)}
+          onSetupComplete={() => setReloadKey((key) => key + 1)}
+        />
+      )}
+      {activeSection === "library" && (
+        <LibraryPage documents={documents} loading={catalogLoading} onQueryChange={setQuery} query={query} />
+      )}
+      {activeSection === "categories" && <CategoriesPage categories={categories} loading={catalogLoading} />}
+      {(activeSection === "binders" || activeSection === "activity") && (
+        <section className="planned-workspace">
+          <p className="eyebrow">Next workspace</p>
+          <h1>{activeSection === "binders" ? "Binder studio" : "Activity log"}</h1>
+          <p>{activeSection === "binders" ? "Binder composition will build on published document versions from your library." : "Uploads, approvals, and releases will be presented as a permanent audit timeline."}</p>
+        </section>
+      )}
       <ZipImportDialog
         onClose={() => setImportOpen(false)}
         onImported={() => setReloadKey((key) => key + 1)}

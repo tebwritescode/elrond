@@ -10,6 +10,7 @@ use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier, password_ha
 use async_trait::async_trait;
 use elrond_domain::{
     auth::{AuthenticatedUser, InitialAdmin, NewSession, UserCredentials},
+    catalog::{CategorySummary, DocumentSummary},
     imports::{ImportSummary, PreparedDocument, PreparedImport},
     library::LibraryOverview,
 };
@@ -65,6 +66,12 @@ pub enum ImportError {
     Repository(#[source] Box<dyn std::error::Error + Send + Sync>),
 }
 
+#[derive(Debug, Error)]
+pub enum CatalogError {
+    #[error("the document catalog could not be loaded")]
+    Repository(#[source] Box<dyn std::error::Error + Send + Sync>),
+}
+
 #[async_trait]
 pub trait LibraryRepository: Send + Sync {
     async fn overview(
@@ -102,6 +109,12 @@ pub trait ImportRepository: Send + Sync {
     ) -> Result<ImportSummary, ImportError>;
 }
 
+#[async_trait]
+pub trait CatalogRepository: Send + Sync {
+    async fn list_documents(&self) -> Result<Vec<DocumentSummary>, CatalogError>;
+    async fn list_categories(&self) -> Result<Vec<CategorySummary>, CatalogError>;
+}
+
 #[derive(Clone)]
 pub struct LibraryService {
     repository: Arc<dyn LibraryRepository>,
@@ -122,6 +135,25 @@ pub struct AuthService {
 #[derive(Clone)]
 pub struct ImportService {
     repository: Arc<dyn ImportRepository>,
+}
+
+#[derive(Clone)]
+pub struct CatalogService {
+    repository: Arc<dyn CatalogRepository>,
+}
+
+impl CatalogService {
+    pub fn new(repository: Arc<dyn CatalogRepository>) -> Self {
+        Self { repository }
+    }
+
+    pub async fn documents(&self) -> Result<Vec<DocumentSummary>, CatalogError> {
+        self.repository.list_documents().await
+    }
+
+    pub async fn categories(&self) -> Result<Vec<CategorySummary>, CatalogError> {
+        self.repository.list_categories().await
+    }
 }
 
 impl ImportService {

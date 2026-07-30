@@ -3,7 +3,6 @@ import {
   Activity,
   Archive,
   BookOpen,
-  Boxes,
   ChevronDown,
   CircleHelp,
   FileStack,
@@ -13,24 +12,45 @@ import {
   Settings,
   Upload,
 } from "lucide-react";
+import type { CategorySummary } from "../../lib/api";
+
+export type WorkspaceSection = "overview" | "library" | "categories" | "binders" | "activity";
 
 type AppShellProps = {
   children: ReactNode;
   connectionStatus: "connected" | "reconnecting";
   currentUsername?: string;
+  activeSection: WorkspaceSection;
+  categories: CategorySummary[];
+  documentCount: number;
+  query: string;
+  onNavigate: (section: WorkspaceSection) => void;
+  onQueryChange: (query: string) => void;
   onImport: () => void;
   onLogout: () => Promise<void>;
 };
 
 const navigation = [
-  { label: "Overview", icon: LayoutDashboard, active: true },
-  { label: "Library", icon: Archive },
-  { label: "Categories", icon: FolderTree },
-  { label: "Binders", icon: BookOpen },
-  { label: "Activity", icon: Activity },
-];
+  { id: "overview", label: "Overview", icon: LayoutDashboard },
+  { id: "library", label: "Library", icon: Archive },
+  { id: "categories", label: "Categories", icon: FolderTree },
+  { id: "binders", label: "Binders", icon: BookOpen },
+  { id: "activity", label: "Activity", icon: Activity },
+] satisfies Array<{ id: WorkspaceSection; label: string; icon: typeof LayoutDashboard }>;
 
-export function AppShell({ children, connectionStatus, currentUsername, onImport, onLogout }: AppShellProps) {
+export function AppShell({
+  children,
+  connectionStatus,
+  currentUsername,
+  activeSection,
+  categories,
+  documentCount,
+  query,
+  onNavigate,
+  onQueryChange,
+  onImport,
+  onLogout,
+}: AppShellProps) {
   const [accountOpen, setAccountOpen] = useState(false);
   const initials = currentUsername?.slice(0, 2).toUpperCase() ?? "EL";
   return (
@@ -48,11 +68,16 @@ export function AppShell({ children, connectionStatus, currentUsername, onImport
 
         <nav className="primary-nav" aria-label="Main navigation">
           <p className="nav-label">Workspace</p>
-          {navigation.map(({ label, icon: Icon, active }) => (
-            <button className={`nav-item${active ? " active" : ""}`} key={label} type="button">
+          {navigation.map(({ id, label, icon: Icon }) => (
+            <button
+              className={`nav-item${activeSection === id ? " active" : ""}`}
+              key={id}
+              onClick={() => onNavigate(id)}
+              type="button"
+            >
               <Icon size={18} strokeWidth={1.8} aria-hidden="true" />
               <span>{label}</span>
-              {label === "Library" && <span className="nav-count">0</span>}
+              {id === "library" && <span className="nav-count">{documentCount}</span>}
             </button>
           ))}
         </nav>
@@ -64,10 +89,17 @@ export function AppShell({ children, connectionStatus, currentUsername, onImport
               <ChevronDown size={14} />
             </button>
           </div>
-          <div className="empty-tree">
-            <Boxes size={18} strokeWidth={1.6} />
-            <span>Your category tree will appear here.</span>
-          </div>
+          {categories.length === 0 ? (
+            <div className="empty-tree"><FolderTree size={18} strokeWidth={1.6} /><span>Your category tree will appear here.</span></div>
+          ) : (
+            <div className="sidebar-tree">
+              {categories.filter((category) => category.parentId === null).slice(0, 7).map((category) => (
+                <button key={category.id} onClick={() => onNavigate("categories")} type="button">
+                  <FolderTree size={14} /><span>{category.name}</span><small>{category.documentCount}</small>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
         <div className="sidebar-footer">
@@ -91,7 +123,15 @@ export function AppShell({ children, connectionStatus, currentUsername, onImport
           <label className="global-search">
             <Search size={18} strokeWidth={1.8} aria-hidden="true" />
             <span className="sr-only">Search the library</span>
-            <input placeholder="Search documents, numbers, text..." type="search" />
+            <input
+              onChange={(event) => {
+                onQueryChange(event.target.value);
+                if (event.target.value) onNavigate("library");
+              }}
+              placeholder="Search documents, numbers, text..."
+              type="search"
+              value={query}
+            />
             <kbd>Ctrl K</kbd>
           </label>
           <button className="upload-button" disabled={!currentUsername} onClick={onImport} type="button">

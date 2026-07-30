@@ -2,10 +2,12 @@ use std::{collections::HashMap, path::PathBuf};
 
 use async_trait::async_trait;
 use elrond_application::{
-    ApplicationError, AuthError, AuthRepository, ImportError, ImportRepository, LibraryRepository,
+    ApplicationError, AuthError, AuthRepository, CatalogError, CatalogRepository, ImportError,
+    ImportRepository, LibraryRepository,
 };
 use elrond_domain::{
     auth::{AuthenticatedUser, InitialAdmin, NewSession, UserCredentials},
+    catalog::{CategorySummary, DocumentSummary},
     imports::{ImportSummary, PreparedImport},
     library::LibraryOverview,
 };
@@ -33,6 +35,62 @@ impl SqliteLibraryRepository {
             pool,
             data_dir: data_dir.into(),
         })
+    }
+}
+
+#[async_trait]
+impl CatalogRepository for SqliteLibraryRepository {
+    async fn list_documents(&self) -> Result<Vec<DocumentSummary>, CatalogError> {
+        sqlx::query_as::<_, (String, String, String, Option<String>, i64, String, bool, String)>(
+            "SELECT documents.id, documents.title, documents.status, categories.name, document_versions.version_number, document_versions.original_filename, document_versions.pdf_storage_key IS NOT NULL, documents.updated_at FROM documents LEFT JOIN categories ON categories.id = documents.category_id JOIN document_versions ON document_versions.document_id = documents.id WHERE document_versions.version_number = (SELECT MAX(latest.version_number) FROM document_versions AS latest WHERE latest.document_id = documents.id) ORDER BY documents.updated_at DESC, documents.title COLLATE NOCASE LIMIT 500",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map(|rows| {
+            rows.into_iter()
+                .map(
+                    |(
+                        id,
+                        title,
+                        status,
+                        category_name,
+                        version_number,
+                        original_filename,
+                        has_pdf,
+                        updated_at,
+                    )| DocumentSummary {
+                        id,
+                        title,
+                        status,
+                        category_name,
+                        version_number,
+                        original_filename,
+                        has_pdf,
+                        updated_at,
+                    },
+                )
+                .collect()
+        })
+        .map_err(catalog_repository_error)
+    }
+
+    async fn list_categories(&self) -> Result<Vec<CategorySummary>, CatalogError> {
+        sqlx::query_as::<_, (String, Option<String>, String, i64)>(
+            "SELECT categories.id, categories.parent_id, categories.name, COUNT(documents.id) FROM categories LEFT JOIN documents ON documents.category_id = categories.id GROUP BY categories.id ORDER BY categories.sort_order, categories.name COLLATE NOCASE",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map(|rows| {
+            rows.into_iter()
+                .map(|(id, parent_id, name, document_count)| CategorySummary {
+                    id,
+                    parent_id,
+                    name,
+                    document_count,
+                })
+                .collect()
+        })
+        .map_err(catalog_repository_error)
     }
 }
 
@@ -360,6 +418,10 @@ fn import_repository_error(error: impl std::error::Error + Send + Sync + 'static
     ImportError::Repository(Box::new(error))
 }
 
+fn catalog_repository_error(error: sqlx::Error) -> CatalogError {
+    CatalogError::Repository(Box::new(error))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -407,6 +469,18 @@ mod tests {
 
         assert_eq!(summary.categories_created, 2);
         assert_eq!(summary.documents_imported, 1);
+        let documents = repository
+            .list_documents()
+            .await
+            .expect("document catalog should load");
+        let categories = repository
+            .list_categories()
+            .await
+            .expect("category catalog should load");
+        assert_eq!(documents.len(), 1);
+        assert_eq!(documents[0].title, "leave");
+        assert_eq!(documents[0].category_name.as_deref(), Some("HR"));
+        assert_eq!(categories.len(), 2);
         assert_eq!(
             sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM document_versions")
                 .fetch_one(&repository.pool)

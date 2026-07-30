@@ -1,0 +1,23 @@
+use serde::Serialize;
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DocumentSummary {
+    pub id: String,
+    pub title: String,
+    pub status: String,
+    pub category_name: Option<String>,
+    pub version_number: i64,
+    pub original_filename: String,
+    pub has_pdf: bool,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CategorySummary {
+    pub id: String,
+    pub parent_id: Option<String>,
+    pub name: String,
+    pub document_count: i64,
+}
