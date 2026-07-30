@@ -28,6 +28,8 @@ export type DocumentSummary = {
   versionNumber: number;
   originalFilename: string;
   hasPdf: boolean;
+  conversionStatus: "queued" | "processing" | "ready" | "failed";
+  conversionError: string | null;
   updatedAt: string;
 };
 

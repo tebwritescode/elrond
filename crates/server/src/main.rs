@@ -2,8 +2,10 @@ use std::{env, net::SocketAddr, path::Path, sync::Arc};
 
 use axum::Router;
 use elrond_api::ApiState;
-use elrond_application::{AuthService, CatalogService, ImportService, LibraryService};
-use elrond_infrastructure::sqlite::SqliteLibraryRepository;
+use elrond_application::{
+    AuthService, CatalogService, ConversionService, ImportService, LibraryService,
+};
+use elrond_infrastructure::{sqlite::SqliteLibraryRepository, stirling::StirlingPdfConverter};
 use tower_http::{
     compression::CompressionLayer,
     services::{ServeDir, ServeFile},
@@ -22,13 +24,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let database_url = env::var("ELROND_DATABASE_URL")
         .unwrap_or_else(|_| format!("sqlite://{data_dir}/elrond.db?mode=rwc"));
     let repository = Arc::new(SqliteLibraryRepository::connect(&database_url, &data_dir).await?);
-    let stirling_configured = env::var("STIRLING_URL")
-        .map(|value| !value.trim().is_empty())
-        .unwrap_or(false);
+    let stirling_url = env::var("STIRLING_URL")
+        .ok()
+        .filter(|value| !value.trim().is_empty());
+    let stirling_configured = stirling_url.is_some();
     let library = LibraryService::new(repository.clone(), stirling_configured);
     let auth = AuthService::new(repository.clone());
     let imports = ImportService::new(repository.clone());
-    let catalog = CatalogService::new(repository);
+    let catalog = CatalogService::new(repository.clone());
+    if let Some(stirling_url) = stirling_url {
+        let api_key = env::var("STIRLING_API_KEY").ok();
+        let converter = Arc::new(StirlingPdfConverter::new(&stirling_url, api_key)?);
+        let conversions = ConversionService::new(repository.clone(), converter);
+        tokio::spawn(async move {
+            loop {
+                match conversions.run_one().await {
+                    Ok(true) => {}
+                    Ok(false) => tokio::time::sleep(std::time::Duration::from_secs(3)).await,
+                    Err(error) => {
+                        tracing::error!(%error, "conversion worker failed");
+                        tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+                    }
+                }
+            }
+        });
+    }
     let secure_cookies = env::var("ELROND_SECURE_COOKIES")
         .map(|value| value.eq_ignore_ascii_case("true"))
         .unwrap_or(false);

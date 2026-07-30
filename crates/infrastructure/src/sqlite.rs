@@ -2,12 +2,13 @@ use std::{collections::HashMap, path::PathBuf};
 
 use async_trait::async_trait;
 use elrond_application::{
-    ApplicationError, AuthError, AuthRepository, CatalogError, CatalogRepository, ImportError,
-    ImportRepository, LibraryRepository,
+    ApplicationError, AuthError, AuthRepository, CatalogError, CatalogRepository, ConversionError,
+    ConversionJobRepository, ImportError, ImportRepository, LibraryRepository,
 };
 use elrond_domain::{
     auth::{AuthenticatedUser, InitialAdmin, NewSession, UserCredentials},
     catalog::{CategorySummary, DocumentSummary},
+    conversions::{ConversionJob, ConversionStatus, PdfDerivative},
     imports::{ImportSummary, PreparedImport},
     library::LibraryOverview,
 };
@@ -41,8 +42,8 @@ impl SqliteLibraryRepository {
 #[async_trait]
 impl CatalogRepository for SqliteLibraryRepository {
     async fn list_documents(&self) -> Result<Vec<DocumentSummary>, CatalogError> {
-        sqlx::query_as::<_, (String, String, String, Option<String>, i64, String, bool, String)>(
-            "SELECT documents.id, documents.title, documents.status, categories.name, document_versions.version_number, document_versions.original_filename, document_versions.pdf_storage_key IS NOT NULL, documents.updated_at FROM documents LEFT JOIN categories ON categories.id = documents.category_id JOIN document_versions ON document_versions.document_id = documents.id WHERE document_versions.version_number = (SELECT MAX(latest.version_number) FROM document_versions AS latest WHERE latest.document_id = documents.id) ORDER BY documents.updated_at DESC, documents.title COLLATE NOCASE LIMIT 500",
+        sqlx::query_as::<_, (String, String, String, Option<String>, i64, String, bool, String, Option<String>, String)>(
+            "SELECT documents.id, documents.title, documents.status, categories.name, document_versions.version_number, document_versions.original_filename, document_versions.pdf_storage_key IS NOT NULL, CASE WHEN document_versions.pdf_storage_key IS NOT NULL THEN 'ready' WHEN conversion_jobs.status = 'processing' THEN 'processing' WHEN conversion_jobs.status = 'failed' THEN 'failed' ELSE 'queued' END, conversion_jobs.last_error, documents.updated_at FROM documents LEFT JOIN categories ON categories.id = documents.category_id JOIN document_versions ON document_versions.document_id = documents.id LEFT JOIN conversion_jobs ON conversion_jobs.document_version_id = document_versions.id WHERE document_versions.version_number = (SELECT MAX(latest.version_number) FROM document_versions AS latest WHERE latest.document_id = documents.id) ORDER BY documents.updated_at DESC, documents.title COLLATE NOCASE LIMIT 500",
         )
         .fetch_all(&self.pool)
         .await
@@ -57,6 +58,8 @@ impl CatalogRepository for SqliteLibraryRepository {
                         version_number,
                         original_filename,
                         has_pdf,
+                        conversion_status,
+                        conversion_error,
                         updated_at,
                     )| DocumentSummary {
                         id,
@@ -66,6 +69,8 @@ impl CatalogRepository for SqliteLibraryRepository {
                         version_number,
                         original_filename,
                         has_pdf,
+                        conversion_status: parse_conversion_status(&conversion_status),
+                        conversion_error,
                         updated_at,
                     },
                 )
@@ -170,11 +175,12 @@ impl ImportRepository for SqliteLibraryRepository {
                 .await
                 .map_err(import_repository_error)?;
             sqlx::query(
-                "INSERT INTO document_versions (id, document_id, version_number, original_filename, original_sha256, original_storage_key, pdf_sha256, pdf_storage_key) VALUES (?, ?, 1, ?, ?, ?, ?, ?)",
+                "INSERT INTO document_versions (id, document_id, version_number, original_filename, original_media_type, original_sha256, original_storage_key, pdf_sha256, pdf_storage_key) VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?)",
             )
-            .bind(version_id)
+            .bind(&version_id)
             .bind(&document_id)
             .bind(&document.filename)
+            .bind(&document.media_type)
             .bind(&document.sha256)
             .bind(&storage_key)
             .bind(is_pdf.then_some(&document.sha256))
@@ -182,6 +188,14 @@ impl ImportRepository for SqliteLibraryRepository {
             .execute(&mut *transaction)
             .await
             .map_err(import_repository_error)?;
+            if !is_pdf {
+                sqlx::query("INSERT INTO conversion_jobs (id, document_version_id) VALUES (?, ?)")
+                    .bind(Uuid::new_v4().to_string())
+                    .bind(&version_id)
+                    .execute(&mut *transaction)
+                    .await
+                    .map_err(import_repository_error)?;
+            }
             sqlx::query(
                 "INSERT INTO document_search (document_id, title, document_number, extracted_text) VALUES (?, ?, '', '')",
             )
@@ -267,6 +281,119 @@ async fn ensure_category_path(
         parent_id = Some(id);
     }
     parent_id.ok_or(ImportError::UnsafeEntry)
+}
+
+#[async_trait]
+impl ConversionJobRepository for SqliteLibraryRepository {
+    async fn claim_next(&self) -> Result<Option<ConversionJob>, ConversionError> {
+        sqlx::query("UPDATE conversion_jobs SET status = 'failed', lease_expires_at = NULL, lease_token = NULL, last_error = 'The conversion stopped before it completed.', updated_at = CURRENT_TIMESTAMP WHERE status = 'processing' AND lease_expires_at <= CURRENT_TIMESTAMP AND attempts >= max_attempts")
+            .execute(&self.pool)
+            .await
+            .map_err(conversion_repository_error)?;
+        let lease_token = Uuid::new_v4().to_string();
+        let row = sqlx::query_as::<_, (String, String, String, String, String)>(
+            "UPDATE conversion_jobs SET status = 'processing', attempts = attempts + 1, lease_expires_at = datetime('now', '+5 minutes'), lease_token = ?, updated_at = CURRENT_TIMESTAMP WHERE id = (SELECT id FROM conversion_jobs WHERE ((status IN ('queued', 'failed') AND available_at <= CURRENT_TIMESTAMP) OR (status = 'processing' AND lease_expires_at <= CURRENT_TIMESTAMP)) AND attempts < max_attempts ORDER BY created_at LIMIT 1) RETURNING id, document_version_id, (SELECT original_filename FROM document_versions WHERE document_versions.id = document_version_id), (SELECT original_media_type FROM document_versions WHERE document_versions.id = document_version_id), (SELECT original_storage_key FROM document_versions WHERE document_versions.id = document_version_id)",
+        )
+        .bind(&lease_token)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(conversion_repository_error)?;
+        let Some((
+            id,
+            document_version_id,
+            original_filename,
+            original_media_type,
+            original_storage_key,
+        )) = row
+        else {
+            return Ok(None);
+        };
+        Ok(Some(ConversionJob {
+            id,
+            lease_token,
+            document_version_id,
+            original_filename,
+            original_media_type,
+            original_storage_key,
+        }))
+    }
+
+    async fn load_original(&self, job: &ConversionJob) -> Result<Vec<u8>, ConversionError> {
+        tokio::fs::read(self.data_dir.join(&job.original_storage_key))
+            .await
+            .map_err(conversion_repository_error)
+    }
+
+    async fn complete(
+        &self,
+        job: &ConversionJob,
+        derivative: PdfDerivative,
+    ) -> Result<(), ConversionError> {
+        let relative_key = format!(
+            "derivatives/{}/{}.pdf",
+            &derivative.sha256[..2],
+            derivative.sha256
+        );
+        let storage_path = self.data_dir.join(&relative_key);
+        if !tokio::fs::try_exists(&storage_path)
+            .await
+            .map_err(conversion_repository_error)?
+        {
+            let parent = storage_path.parent().ok_or_else(|| {
+                conversion_repository_error(std::io::Error::other("invalid derivative path"))
+            })?;
+            tokio::fs::create_dir_all(parent)
+                .await
+                .map_err(conversion_repository_error)?;
+            let temporary = storage_path.with_extension(format!("{}.tmp", Uuid::new_v4()));
+            tokio::fs::write(&temporary, &derivative.content)
+                .await
+                .map_err(conversion_repository_error)?;
+            tokio::fs::rename(&temporary, &storage_path)
+                .await
+                .map_err(conversion_repository_error)?;
+        }
+        let mut transaction = self
+            .pool
+            .begin()
+            .await
+            .map_err(conversion_repository_error)?;
+        let completed = sqlx::query("UPDATE conversion_jobs SET status = 'completed', lease_expires_at = NULL, lease_token = NULL, last_error = NULL, completed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'processing' AND lease_token = ?")
+            .bind(&job.id)
+            .bind(&job.lease_token)
+            .execute(&mut *transaction)
+            .await
+            .map_err(conversion_repository_error)?;
+        if completed.rows_affected() != 1 {
+            return Err(conversion_repository_error(std::io::Error::other(
+                "conversion lease was lost",
+            )));
+        }
+        sqlx::query(
+            "UPDATE document_versions SET pdf_sha256 = ?, pdf_storage_key = ? WHERE id = ?",
+        )
+        .bind(&derivative.sha256)
+        .bind(&relative_key)
+        .bind(&job.document_version_id)
+        .execute(&mut *transaction)
+        .await
+        .map_err(conversion_repository_error)?;
+        transaction
+            .commit()
+            .await
+            .map_err(conversion_repository_error)
+    }
+
+    async fn fail(&self, job: &ConversionJob, error: &str) -> Result<(), ConversionError> {
+        sqlx::query("UPDATE conversion_jobs SET status = CASE WHEN attempts >= max_attempts THEN 'failed' ELSE 'queued' END, available_at = datetime('now', '+30 seconds'), lease_expires_at = NULL, lease_token = NULL, last_error = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'processing' AND lease_token = ?")
+            .bind(error)
+            .bind(&job.id)
+            .bind(&job.lease_token)
+            .execute(&self.pool)
+            .await
+            .map(|_| ())
+            .map_err(conversion_repository_error)
+    }
 }
 
 #[async_trait]
@@ -418,6 +545,21 @@ fn import_repository_error(error: impl std::error::Error + Send + Sync + 'static
     ImportError::Repository(Box::new(error))
 }
 
+fn conversion_repository_error(
+    error: impl std::error::Error + Send + Sync + 'static,
+) -> ConversionError {
+    ConversionError::Repository(Box::new(error))
+}
+
+fn parse_conversion_status(status: &str) -> ConversionStatus {
+    match status {
+        "processing" => ConversionStatus::Processing,
+        "ready" => ConversionStatus::Ready,
+        "failed" => ConversionStatus::Failed,
+        _ => ConversionStatus::Queued,
+    }
+}
+
 fn catalog_repository_error(error: sqlx::Error) -> CatalogError {
     CatalogError::Repository(Box::new(error))
 }
@@ -480,6 +622,7 @@ mod tests {
         assert_eq!(documents.len(), 1);
         assert_eq!(documents[0].title, "leave");
         assert_eq!(documents[0].category_name.as_deref(), Some("HR"));
+        assert_eq!(documents[0].conversion_status, ConversionStatus::Queued);
         assert_eq!(categories.len(), 2);
         assert_eq!(
             sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM document_versions")
@@ -503,5 +646,36 @@ mod tests {
                 .join(sha256)
                 .is_file()
         );
+
+        let job = repository
+            .claim_next()
+            .await
+            .expect("conversion job should be claimable")
+            .expect("text import should enqueue conversion");
+        assert_eq!(job.original_media_type, "text/plain");
+        assert_eq!(
+            repository
+                .load_original(&job)
+                .await
+                .expect("original should load"),
+            b"Controlled leave policy"
+        );
+        let pdf = b"%PDF-1.7\nfixture".to_vec();
+        repository
+            .complete(
+                &job,
+                PdfDerivative {
+                    sha256: "b".repeat(64),
+                    content: pdf,
+                },
+            )
+            .await
+            .expect("conversion should complete");
+        let converted = repository
+            .list_documents()
+            .await
+            .expect("converted catalog should load");
+        assert_eq!(converted[0].conversion_status, ConversionStatus::Ready);
+        assert!(converted[0].has_pdf);
     }
 }

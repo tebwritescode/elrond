@@ -11,6 +11,7 @@ use async_trait::async_trait;
 use elrond_domain::{
     auth::{AuthenticatedUser, InitialAdmin, NewSession, UserCredentials},
     catalog::{CategorySummary, DocumentSummary},
+    conversions::{ConversionJob, PdfDerivative},
     imports::{ImportSummary, PreparedDocument, PreparedImport},
     library::LibraryOverview,
 };
@@ -72,6 +73,16 @@ pub enum CatalogError {
     Repository(#[source] Box<dyn std::error::Error + Send + Sync>),
 }
 
+#[derive(Debug, Error)]
+pub enum ConversionError {
+    #[error("the conversion queue could not complete the operation")]
+    Repository(#[source] Box<dyn std::error::Error + Send + Sync>),
+    #[error("the document converter could not create a PDF: {0}")]
+    Converter(String),
+    #[error("the converter returned an invalid PDF")]
+    InvalidPdf,
+}
+
 #[async_trait]
 pub trait LibraryRepository: Send + Sync {
     async fn overview(
@@ -115,6 +126,28 @@ pub trait CatalogRepository: Send + Sync {
     async fn list_categories(&self) -> Result<Vec<CategorySummary>, CatalogError>;
 }
 
+#[async_trait]
+pub trait ConversionJobRepository: Send + Sync {
+    async fn claim_next(&self) -> Result<Option<ConversionJob>, ConversionError>;
+    async fn load_original(&self, job: &ConversionJob) -> Result<Vec<u8>, ConversionError>;
+    async fn complete(
+        &self,
+        job: &ConversionJob,
+        derivative: PdfDerivative,
+    ) -> Result<(), ConversionError>;
+    async fn fail(&self, job: &ConversionJob, error: &str) -> Result<(), ConversionError>;
+}
+
+#[async_trait]
+pub trait DocumentConverter: Send + Sync {
+    async fn convert_to_pdf(
+        &self,
+        filename: &str,
+        media_type: &str,
+        content: Vec<u8>,
+    ) -> Result<Vec<u8>, ConversionError>;
+}
+
 #[derive(Clone)]
 pub struct LibraryService {
     repository: Arc<dyn LibraryRepository>,
@@ -140,6 +173,62 @@ pub struct ImportService {
 #[derive(Clone)]
 pub struct CatalogService {
     repository: Arc<dyn CatalogRepository>,
+}
+
+#[derive(Clone)]
+pub struct ConversionService {
+    repository: Arc<dyn ConversionJobRepository>,
+    converter: Arc<dyn DocumentConverter>,
+}
+
+impl ConversionService {
+    pub fn new(
+        repository: Arc<dyn ConversionJobRepository>,
+        converter: Arc<dyn DocumentConverter>,
+    ) -> Self {
+        Self {
+            repository,
+            converter,
+        }
+    }
+
+    pub async fn run_one(&self) -> Result<bool, ConversionError> {
+        let Some(job) = self.repository.claim_next().await? else {
+            return Ok(false);
+        };
+        let result = async {
+            let original = self.repository.load_original(&job).await?;
+            let pdf = self
+                .converter
+                .convert_to_pdf(&job.original_filename, &job.original_media_type, original)
+                .await?;
+            if pdf.len() < 5 || !pdf.starts_with(b"%PDF-") {
+                return Err(ConversionError::InvalidPdf);
+            }
+            let sha256 = hex::encode(Sha256::digest(&pdf));
+            self.repository
+                .complete(
+                    &job,
+                    PdfDerivative {
+                        sha256,
+                        content: pdf,
+                    },
+                )
+                .await
+        }
+        .await;
+
+        if let Err(error) = result {
+            tracing::warn!(job_id = %job.id, error = %error, "document conversion failed");
+            let message = match error {
+                ConversionError::InvalidPdf => "The converter returned an invalid PDF.",
+                ConversionError::Converter(_) => "The document could not be converted to PDF.",
+                ConversionError::Repository(_) => "The conversion could not be stored.",
+            };
+            self.repository.fail(&job, message).await?;
+        }
+        Ok(true)
+    }
 }
 
 impl CatalogService {

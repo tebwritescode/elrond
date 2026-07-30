@@ -1,5 +1,5 @@
 import { useDeferredValue, useState } from "react";
-import { ChevronRight, File, FileCheck2, FileClock, FileText, Search, X } from "lucide-react";
+import { ChevronRight, CircleX, File, FileCheck2, FileClock, FileText, LoaderCircle, Search, X } from "lucide-react";
 import type { DocumentSummary } from "../../lib/api";
 
 type LibraryPageProps = {
@@ -10,7 +10,8 @@ type LibraryPageProps = {
 };
 
 export function LibraryPage({ documents, loading, query, onQueryChange }: LibraryPageProps) {
-  const [selected, setSelected] = useState<DocumentSummary>();
+  const [selectedId, setSelectedId] = useState<string>();
+  const selected = documents.find((document) => document.id === selectedId);
   const deferredQuery = useDeferredValue(query.trim().toLocaleLowerCase());
   const visibleDocuments = deferredQuery
     ? documents.filter((document) =>
@@ -63,12 +64,12 @@ export function LibraryPage({ documents, loading, query, onQueryChange }: Librar
               <thead><tr><th>Document</th><th>Category</th><th>Status</th><th>Version</th><th>PDF</th><th><span className="sr-only">Open</span></th></tr></thead>
               <tbody>
                 {visibleDocuments.map((document) => (
-                  <tr key={document.id} onClick={() => setSelected(document)}>
+                  <tr key={document.id} onClick={() => setSelectedId(document.id)}>
                     <td><span className="file-glyph"><File size={17} /></span><span><strong>{document.title}</strong><small>{document.originalFilename}</small></span></td>
                     <td>{document.categoryName ?? "Unfiled"}</td>
                     <td><Status status={document.status} /></td>
                     <td>v{document.versionNumber}</td>
-                    <td>{document.hasPdf ? <span className="pdf-ready"><FileCheck2 size={15} /> Ready</span> : <span className="pdf-pending"><FileClock size={15} /> Pending</span>}</td>
+                    <td><PdfStatus document={document} /></td>
                     <td><ChevronRight size={17} /></td>
                   </tr>
                 ))}
@@ -80,7 +81,7 @@ export function LibraryPage({ documents, loading, query, onQueryChange }: Librar
 
       {selected && (
         <aside className="document-inspector" aria-label={`${selected.title} details`}>
-          <button aria-label="Close document details" onClick={() => setSelected(undefined)} type="button"><X size={19} /></button>
+          <button aria-label="Close document details" onClick={() => setSelectedId(undefined)} type="button"><X size={19} /></button>
           <div className="inspector-document"><FileText size={34} strokeWidth={1.3} /></div>
           <p className="eyebrow">Document details</p>
           <h2>{selected.title}</h2>
@@ -89,13 +90,21 @@ export function LibraryPage({ documents, loading, query, onQueryChange }: Librar
             <div><dt>Primary category</dt><dd>{selected.categoryName ?? "Unfiled"}</dd></div>
             <div><dt>Lifecycle</dt><dd><Status status={selected.status} /></dd></div>
             <div><dt>Current version</dt><dd>Version {selected.versionNumber}</dd></div>
-            <div><dt>Viewing copy</dt><dd>{selected.hasPdf ? "PDF ready" : "Waiting for conversion"}</dd></div>
+            <div><dt>Viewing copy</dt><dd><PdfStatus document={selected} /></dd></div>
           </dl>
+          {selected.conversionStatus === "failed" && selected.conversionError && <p role="alert">{selected.conversionError}</p>}
           <button className="inspector-primary" disabled={!selected.hasPdf} type="button">{selected.hasPdf ? "Open document" : "PDF not ready"}</button>
         </aside>
       )}
     </div>
   );
+}
+
+function PdfStatus({ document }: { document: DocumentSummary }) {
+  if (document.conversionStatus === "ready") return <span className="pdf-ready"><FileCheck2 size={15} /> Ready</span>;
+  if (document.conversionStatus === "processing") return <span className="pdf-pending"><LoaderCircle size={15} /> Converting</span>;
+  if (document.conversionStatus === "failed") return <span className="pdf-pending"><CircleX size={15} /> Failed</span>;
+  return <span className="pdf-pending"><FileClock size={15} /> Queued</span>;
 }
 
 function Status({ status }: { status: DocumentSummary["status"] }) {

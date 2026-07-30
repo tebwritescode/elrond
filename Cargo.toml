@@ -9,7 +9,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/tebwritescode/Elrond"
@@ -22,12 +22,13 @@ axum = { version = "0.8.9", features = ["multipart"] }
 dotenvy = "0.15.7"
 hex = "0.4.3"
 rand = "0.9.2"
+reqwest = { version = "0.13.2", default-features = false, features = ["json", "multipart", "rustls"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
 sha2 = "0.10.9"
 sqlx = { version = "0.9.0", features = ["runtime-tokio", "sqlite", "migrate"] }
 thiserror = "2.0.17"
-tokio = { version = "1.49.0", features = ["macros", "rt-multi-thread", "signal", "fs"] }
+tokio = { version = "1.49.0", features = ["macros", "rt-multi-thread", "signal", "fs", "time"] }
 tower-http = { version = "0.6.8", features = ["fs", "trace", "compression-gzip"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }

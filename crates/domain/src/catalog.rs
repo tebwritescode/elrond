@@ -1,5 +1,7 @@
 use serde::Serialize;
 
+use crate::conversions::ConversionStatus;
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DocumentSummary {
@@ -10,6 +12,8 @@ pub struct DocumentSummary {
     pub version_number: i64,
     pub original_filename: String,
     pub has_pdf: bool,
+    pub conversion_status: ConversionStatus,
+    pub conversion_error: Option<String>,
     pub updated_at: String,
 }
 

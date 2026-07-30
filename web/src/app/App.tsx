@@ -77,6 +77,22 @@ export function App() {
     return () => controller.abort();
   }, [currentUser, reloadKey]);
 
+  useEffect(() => {
+    if (loadState.status !== "ready" || !loadState.overview.stirlingConfigured || !currentUser || !documents.some((document) => ["queued", "processing"].includes(document.conversionStatus))) return;
+    const controller = new AbortController();
+    const timer = setInterval(() => {
+      fetchDocuments(controller.signal)
+        .then(setDocuments)
+        .catch((error: unknown) => {
+          if (!(error instanceof DOMException && error.name === "AbortError")) console.error(error);
+        });
+    }, 3_000);
+    return () => {
+      controller.abort();
+      clearInterval(timer);
+    };
+  }, [currentUser, documents, loadState]);
+
   if (
     loadState.status === "ready" &&
     !loadState.overview.setupRequired &&
