@@ -5,6 +5,8 @@
 //! is SQLite or PostgreSQL, or whether the transport is HTTP.
 
 pub mod auth;
+pub mod categories;
+pub mod documents;
 pub mod error;
 pub mod ports;
 

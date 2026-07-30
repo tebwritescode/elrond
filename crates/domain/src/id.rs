@@ -85,6 +85,10 @@ define_id!(
     CategoryId
 );
 define_id!(
+    /// Identifies a tag.
+    TagId
+);
+define_id!(
     /// Identifies a server-side session record.
     ///
     /// This is the database key, never the bearer token. The token itself is

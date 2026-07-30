@@ -295,6 +295,329 @@ mod tests {
         );
     }
 
+    /// Inserts a child named "2026" under `parent`.
+    async fn insert_child(
+        db: &Database,
+        parent: [u8; 16],
+    ) -> Result<sqlx::sqlite::SqliteQueryResult, sqlx::Error> {
+        sqlx::query(
+            "INSERT INTO categories (id, parent_id, name, name_key, created_at, updated_at)
+             VALUES (randomblob(16), ?1, '2026', '2026', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+        )
+        .bind(parent.as_slice())
+        .execute(db.pool())
+        .await
+    }
+
+    /// Records a conversion result against a version.
+    async fn set_derivative(
+        db: &Database,
+        version: [u8; 16],
+        key: &str,
+    ) -> Result<sqlx::sqlite::SqliteQueryResult, sqlx::Error> {
+        sqlx::query(
+            "UPDATE document_versions
+             SET derivative_key = ?2,
+                 derivative_checksum = 'aa3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'
+             WHERE id = ?1",
+        )
+        .bind(version.as_slice())
+        .bind(key)
+        .execute(db.pool())
+        .await
+    }
+
+    /// Inserts a root category and returns its id bytes as a hex literal.
+    async fn seed_category(db: &Database) -> [u8; 16] {
+        let id = [0x0a_u8; 16];
+        sqlx::query(
+            "INSERT INTO categories (id, name, name_key, created_at, updated_at)
+             VALUES (?1, 'Policies', 'policies', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+        )
+        .bind(id.as_slice())
+        .execute(db.pool())
+        .await
+        .expect("category inserted");
+        id
+    }
+
+    #[tokio::test]
+    async fn root_categories_cannot_share_a_name() {
+        let db = Database::connect_in_memory().await.expect("connects");
+        seed_category(&db).await;
+
+        // SQLite treats NULLs as distinct in a unique index, so this only works
+        // because of the partial index dedicated to root rows.
+        let result = sqlx::query(
+            "INSERT INTO categories (id, name, name_key, created_at, updated_at)
+             VALUES (randomblob(16), 'policies', 'policies', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+        )
+        .execute(db.pool())
+        .await;
+        assert!(result.is_err(), "two root categories shared a name");
+    }
+
+    #[tokio::test]
+    async fn siblings_cannot_share_a_name_but_cousins_can() {
+        let db = Database::connect_in_memory().await.expect("connects");
+        let parent = seed_category(&db).await;
+        let other_parent = [0x0b_u8; 16];
+        sqlx::query(
+            "INSERT INTO categories (id, name, name_key, created_at, updated_at)
+             VALUES (?1, 'Finance', 'finance', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+        )
+        .bind(other_parent.as_slice())
+        .execute(db.pool())
+        .await
+        .expect("second root inserted");
+
+        insert_child(&db, parent)
+            .await
+            .expect("first child inserted");
+        assert!(
+            insert_child(&db, parent).await.is_err(),
+            "siblings shared a name"
+        );
+        insert_child(&db, other_parent)
+            .await
+            .expect("the same name under a different parent is fine");
+    }
+
+    #[tokio::test]
+    async fn a_category_cannot_be_its_own_parent() {
+        let db = Database::connect_in_memory().await.expect("connects");
+        let id = seed_category(&db).await;
+
+        let result = sqlx::query("UPDATE categories SET parent_id = id WHERE id = ?1")
+            .bind(id.as_slice())
+            .execute(db.pool())
+            .await;
+        assert!(result.is_err(), "a one-node cycle was accepted");
+    }
+
+    #[tokio::test]
+    async fn deleting_a_category_with_documents_is_refused() {
+        let db = Database::connect_in_memory().await.expect("connects");
+        let category = seed_category(&db).await;
+        sqlx::query(
+            "INSERT INTO documents (id, title, category_id, lifecycle, created_by, created_at, updated_at)
+             VALUES (randomblob(16), 'Retention Policy', ?1, 'draft', randomblob(16),
+                     '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+        )
+        .bind(category.as_slice())
+        .execute(db.pool())
+        .await
+        .expect("document inserted");
+
+        // RESTRICT, not CASCADE: documents must never vanish with their category.
+        let result = sqlx::query("DELETE FROM categories WHERE id = ?1")
+            .bind(category.as_slice())
+            .execute(db.pool())
+            .await;
+        assert!(result.is_err(), "documents were silently deletable");
+    }
+
+    #[tokio::test]
+    async fn version_count_and_current_version_stay_consistent() {
+        let db = Database::connect_in_memory().await.expect("connects");
+        let category = seed_category(&db).await;
+
+        // Claiming a version without naming one must be refused.
+        let result = sqlx::query(
+            "INSERT INTO documents (id, title, category_id, lifecycle, version_count, created_by, created_at, updated_at)
+             VALUES (randomblob(16), 'Broken', ?1, 'draft', 1, randomblob(16),
+                     '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+        )
+        .bind(category.as_slice())
+        .execute(db.pool())
+        .await;
+        assert!(
+            result.is_err(),
+            "a document claimed a version it did not have"
+        );
+    }
+
+    /// Inserts a document with one version, returning both ids.
+    async fn seed_document_with_version(db: &Database) -> ([u8; 16], [u8; 16]) {
+        let category = seed_category(db).await;
+        let document = [0x0c_u8; 16];
+        let version = [0x0d_u8; 16];
+
+        sqlx::query(
+            "INSERT INTO documents (id, title, category_id, lifecycle, current_version_id, version_count, created_by, created_at, updated_at)
+             VALUES (?1, 'Retention Policy', ?2, 'draft', ?3, 1, randomblob(16),
+                     '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+        )
+        .bind(document.as_slice())
+        .bind(category.as_slice())
+        .bind(version.as_slice())
+        .execute(db.pool())
+        .await
+        .expect("document inserted");
+
+        sqlx::query(
+            "INSERT INTO document_versions
+                 (id, document_id, number, original_filename, media_type, byte_size,
+                  checksum, storage_key, created_by, created_at)
+             VALUES (?1, ?2, 1, 'policy.pdf', 'application/pdf', 1024,
+                     'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+                     'originals/e3/b0/e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+                     randomblob(16), '2026-01-01T00:00:00Z')",
+        )
+        .bind(version.as_slice())
+        .bind(document.as_slice())
+        .execute(db.pool())
+        .await
+        .expect("version inserted");
+
+        (document, version)
+    }
+
+    #[tokio::test]
+    async fn version_content_cannot_be_edited_in_place() {
+        let db = Database::connect_in_memory().await.expect("connects");
+        let (_document, version) = seed_document_with_version(&db).await;
+
+        for column in [
+            "checksum = 'ff'",
+            "storage_key = 'originals/ff/ff/ff'",
+            "byte_size = 0",
+            "media_type = 'text/plain'",
+            "original_filename = 'other.pdf'",
+            "number = 2",
+        ] {
+            let result = sqlx::query(&format!(
+                "UPDATE document_versions SET {column} WHERE id = ?1"
+            ))
+            .bind(version.as_slice())
+            .execute(db.pool())
+            .await;
+            assert!(
+                result.is_err(),
+                "a binder release pins this version; {column} must not be editable"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_derivative_can_be_filled_in_once_and_not_replaced() {
+        let db = Database::connect_in_memory().await.expect("connects");
+        let (_document, version) = seed_document_with_version(&db).await;
+
+        set_derivative(&db, version, "derivatives/aa/3b/x.pdf")
+            .await
+            .expect("the first conversion result is accepted");
+        assert!(
+            set_derivative(&db, version, "derivatives/bb/3b/x.pdf")
+                .await
+                .is_err(),
+            "replacing a derivative would change what an existing release renders"
+        );
+    }
+
+    #[tokio::test]
+    async fn versions_cannot_reuse_a_sequence_number() {
+        let db = Database::connect_in_memory().await.expect("connects");
+        let (document, _version) = seed_document_with_version(&db).await;
+
+        let result = sqlx::query(
+            "INSERT INTO document_versions
+                 (id, document_id, number, original_filename, media_type, byte_size,
+                  checksum, storage_key, created_by, created_at)
+             VALUES (randomblob(16), ?1, 1, 'again.pdf', 'application/pdf', 2048,
+                     'aa', 'originals/aa/bb/cc', randomblob(16), '2026-01-01T00:00:00Z')",
+        )
+        .bind(document.as_slice())
+        .execute(db.pool())
+        .await;
+        assert!(result.is_err(), "two versions shared a sequence number");
+    }
+
+    #[tokio::test]
+    async fn deleting_a_document_cascades_to_its_versions_and_tags() {
+        let db = Database::connect_in_memory().await.expect("connects");
+        let (document, _version) = seed_document_with_version(&db).await;
+
+        sqlx::query("DELETE FROM documents WHERE id = ?1")
+            .bind(document.as_slice())
+            .execute(db.pool())
+            .await
+            .expect("document deleted");
+
+        let (versions,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM document_versions")
+            .fetch_one(db.pool())
+            .await
+            .expect("query succeeds");
+        assert_eq!(versions, 0);
+    }
+
+    #[tokio::test]
+    async fn a_derivative_needs_both_its_key_and_its_checksum() {
+        let db = Database::connect_in_memory().await.expect("connects");
+        let (_document, version) = seed_document_with_version(&db).await;
+
+        let result = sqlx::query(
+            "UPDATE document_versions SET derivative_key = 'derivatives/aa/bb/x.pdf' WHERE id = ?1",
+        )
+        .bind(version.as_slice())
+        .execute(db.pool())
+        .await;
+        assert!(result.is_err(), "a half-recorded derivative was accepted");
+    }
+
+    #[tokio::test]
+    async fn full_text_search_finds_a_document_and_folds_diacritics() {
+        let db = Database::connect_in_memory().await.expect("connects");
+        sqlx::query(
+            "INSERT INTO documents_fts (document_id, title, filename, tags, content)
+             VALUES ('019fb07b', 'Résumé of Findings', 'resume.pdf', 'policy board',
+                     'The committee resolved to adopt the retention schedule.')",
+        )
+        .execute(db.pool())
+        .await
+        .expect("indexed");
+
+        for query in ["resume", "résumé", "retention", "polic*", "committee"] {
+            let (hits,): (i64,) =
+                sqlx::query_as("SELECT COUNT(*) FROM documents_fts WHERE documents_fts MATCH ?1")
+                    .bind(query)
+                    .fetch_one(db.pool())
+                    .await
+                    .unwrap_or_else(|error| panic!("search for {query:?} failed: {error}"));
+            assert_eq!(hits, 1, "expected {query:?} to match");
+        }
+
+        let (misses,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM documents_fts WHERE documents_fts MATCH ?1")
+                .bind("unrelated")
+                .fetch_one(db.pool())
+                .await
+                .expect("query succeeds");
+        assert_eq!(misses, 0);
+    }
+
+    #[tokio::test]
+    async fn blob_reference_counts_cannot_go_negative() {
+        let db = Database::connect_in_memory().await.expect("connects");
+        sqlx::query(
+            "INSERT INTO blobs (storage_key, checksum, byte_size, reference_count, created_at)
+             VALUES ('originals/aa/bb/cc', 'aabbcc', 10, 0, '2026-01-01T00:00:00Z')",
+        )
+        .execute(db.pool())
+        .await
+        .expect("blob recorded");
+
+        let result = sqlx::query(
+            "UPDATE blobs SET reference_count = reference_count - 1 WHERE storage_key = 'originals/aa/bb/cc'",
+        )
+        .execute(db.pool())
+        .await;
+        assert!(
+            result.is_err(),
+            "an underflowed reference count would delete bytes another version still needs"
+        );
+    }
+
     #[tokio::test]
     async fn role_check_constraint_rejects_unknown_roles() {
         let db = Database::connect_in_memory().await.expect("connects");

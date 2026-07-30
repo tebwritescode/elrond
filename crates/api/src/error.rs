@@ -12,7 +12,7 @@ use axum::extract::rejection::JsonRejection;
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use elrond_application::ApplicationError;
-use elrond_application::ports::RepositoryError;
+use elrond_application::ports::{BlobError, RepositoryError};
 use serde::Serialize;
 
 /// Result alias for handlers.
@@ -149,14 +149,22 @@ fn application_status(error: &ApplicationError) -> StatusCode {
         | ApplicationError::SetupAlreadyCompleted
         | ApplicationError::Conflict { .. } => StatusCode::CONFLICT,
         ApplicationError::Repository(RepositoryError::Backend(_))
-        | ApplicationError::Hashing(_) => StatusCode::INTERNAL_SERVER_ERROR,
+        | ApplicationError::Hashing(_)
+        | ApplicationError::Storage(BlobError::Backend(_) | BlobError::IntegrityFailure { .. }) => {
+            StatusCode::INTERNAL_SERVER_ERROR
+        }
+        ApplicationError::Storage(BlobError::TooLarge { .. }) => StatusCode::PAYLOAD_TOO_LARGE,
         ApplicationError::InvalidCredentials | ApplicationError::NotAuthenticated => {
             StatusCode::UNAUTHORIZED
         }
         ApplicationError::AccountDisabled | ApplicationError::Forbidden { .. } => {
             StatusCode::FORBIDDEN
         }
-        ApplicationError::NotFound { .. } => StatusCode::NOT_FOUND,
+        // Content recorded in the database but missing from the blob store is a
+        // server-side inconsistency rather than a bad request, but 404 is what a
+        // client can actually act on, so it shares the not-found mapping.
+        ApplicationError::NotFound { .. }
+        | ApplicationError::Storage(BlobError::NotFound { .. }) => StatusCode::NOT_FOUND,
     }
 }
 

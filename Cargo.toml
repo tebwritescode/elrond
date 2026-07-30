@@ -25,6 +25,9 @@ axum-extra = { version = "0.10", features = ["cookie"] }
 base64ct = { version = "1.8", features = ["alloc"] }
 hex = "0.4"
 http = "1"
+# Identifies file types from magic bytes, so a filename can never decide how a
+# stored file is treated.
+infer = { version = "0.19", default-features = false }
 mime_guess = "2"
 rand = "0.9"
 serde = { version = "1", features = ["derive"] }

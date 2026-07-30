@@ -22,6 +22,10 @@ pub enum ApplicationError {
     #[error(transparent)]
     Repository(#[from] RepositoryError),
 
+    /// Content storage failed.
+    #[error(transparent)]
+    Storage(#[from] crate::ports::BlobError),
+
     /// Password hashing or verification failed for a reason unrelated to the
     /// supplied password being wrong.
     #[error(transparent)]
@@ -76,7 +80,16 @@ impl ApplicationError {
         match self {
             Self::Domain(error) => error.code(),
             Self::Repository(RepositoryError::UniqueViolation { .. }) => "already_exists",
-            Self::Repository(RepositoryError::Backend(_)) => "storage_failure",
+            // A database failure and a blob-store failure are the same thing from a
+            // client's point of view: storage did not work, and the detail is in the
+            // log rather than in the response.
+            Self::Repository(RepositoryError::Backend(_))
+            | Self::Storage(crate::ports::BlobError::Backend(_)) => "storage_failure",
+            Self::Storage(crate::ports::BlobError::NotFound { .. }) => "content_not_found",
+            Self::Storage(crate::ports::BlobError::IntegrityFailure { .. }) => {
+                "content_integrity_failure"
+            }
+            Self::Storage(crate::ports::BlobError::TooLarge { .. }) => "content_too_large",
             Self::Hashing(_) => "credential_processing_failure",
             Self::InvalidCredentials => "invalid_credentials",
             Self::AccountDisabled => "account_disabled",
@@ -103,7 +116,13 @@ impl ApplicationError {
     pub fn is_client_error(&self) -> bool {
         !matches!(
             self,
-            Self::Repository(RepositoryError::Backend(_)) | Self::Hashing(_)
+            Self::Repository(RepositoryError::Backend(_))
+                | Self::Hashing(_)
+                | Self::Storage(
+                    crate::ports::BlobError::Backend(_)
+                        | crate::ports::BlobError::IntegrityFailure { .. }
+                        | crate::ports::BlobError::NotFound { .. }
+                )
         )
     }
 }

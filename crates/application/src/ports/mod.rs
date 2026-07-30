@@ -3,6 +3,19 @@
 //! Ports are defined by what the use cases need, not by what SQLite happens to
 //! make convenient. That is what keeps a future PostgreSQL or object-storage
 //! backend a drop-in change.
+//!
+//! This module holds the shared error types and the authentication ports;
+//! [`blobs`] and [`library`] cover content storage and the document library.
+
+pub mod blobs;
+pub mod library;
+
+pub use blobs::{BlobError, BlobStore, ContentInspector, StoredBlob};
+pub use library::{
+    CategoryRepository, DocumentFilter, DocumentPage, DocumentRepository, DocumentSort,
+    IndexedDocument, NewCategory, NewDocument, NewVersion, SearchIndex, SearchOutcome, SortOrder,
+    StoredDocument, TagRepository,
+};
 
 use std::fmt;
 
