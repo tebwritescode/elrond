@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type DragEvent, type FormEvent } from "rea
 import { Archive, CheckCircle2, FileArchive, FileUp, FolderTree, Upload, X } from "lucide-react";
 import {
   importZipArchive,
-  uploadDocument,
+  uploadDocuments,
   type CategorySummary,
   type ImportSummary,
 } from "../../lib/api";
@@ -16,7 +16,7 @@ type ZipImportDialogProps = {
 
 export function ZipImportDialog({ open, categories, onClose, onImported }: ZipImportDialogProps) {
   const input = useRef<HTMLInputElement>(null);
-  const [archive, setArchive] = useState<File>();
+  const [files, setFiles] = useState<File[]>([]);
   const [mode, setMode] = useState<"document" | "hierarchy">("document");
   const [rootCategory, setRootCategory] = useState("Imported");
   const [categoryId, setCategoryId] = useState("");
@@ -36,46 +36,57 @@ export function ZipImportDialog({ open, categories, onClose, onImported }: ZipIm
 
   if (!open) return null;
 
-  function selectFile(file?: File) {
+  function selectFiles(selected: File[]) {
     setError(undefined);
     setSummary(undefined);
+    if (selected.length === 0) return;
+    const chosen = mode === "hierarchy" ? selected.slice(0, 1) : selected;
+    const file = chosen[0];
     if (!file) return;
     if (mode === "hierarchy" && !file.name.toLowerCase().endsWith(".zip")) {
-      setArchive(undefined);
+      setFiles([]);
       setError("Choose a file ending in .zip.");
       return;
     }
     const supported = ["pdf", "docx", "xlsx", "pptx", "odt", "ods", "odp", "txt", "jpg", "jpeg", "png", "tif", "tiff"];
     const extension = file.name.split(".").pop()?.toLowerCase() ?? "";
     if (mode === "document" && !supported.includes(extension)) {
-      setArchive(undefined);
+      setFiles([]);
       setError("This file type is not supported yet.");
       return;
     }
     const limit = mode === "hierarchy" ? 256 * 1024 * 1024 : 100 * 1024 * 1024;
     if (file.size > limit) {
-      setArchive(undefined);
+      setFiles([]);
       setError(`The selected file exceeds the ${mode === "hierarchy" ? "256" : "100"} MiB upload limit.`);
       return;
     }
-    setArchive(file);
+    if (mode === "document" && chosen.some((item) => {
+      const itemExtension = item.name.split(".").pop()?.toLowerCase() ?? "";
+      return item.size > limit || !supported.includes(itemExtension);
+    })) {
+      setFiles([]);
+      setError("Every selected document must be supported and no larger than 100 MiB.");
+      return;
+    }
+    setFiles(chosen);
   }
 
   function drop(event: DragEvent<HTMLButtonElement>) {
     event.preventDefault();
     setDragging(false);
-    selectFile(event.dataTransfer.files[0]);
+    selectFiles(Array.from(event.dataTransfer.files));
   }
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!archive) return;
+    if (files.length === 0) return;
     setSubmitting(true);
     setError(undefined);
     try {
       const result = mode === "hierarchy"
-        ? await importZipArchive(archive, rootCategory)
-        : await uploadDocument(archive, buildCategoryPath(categories, categoryId));
+        ? await importZipArchive(files[0]!, rootCategory)
+        : await uploadDocuments(files, buildCategoryPath(categories, categoryId));
       setSummary(result);
       onImported();
     } catch (caughtError) {
@@ -87,7 +98,7 @@ export function ZipImportDialog({ open, categories, onClose, onImported }: ZipIm
 
   function close() {
     if (submitting) return;
-    setArchive(undefined);
+    setFiles([]);
     setSummary(undefined);
     setError(undefined);
     onClose();
@@ -117,7 +128,7 @@ export function ZipImportDialog({ open, categories, onClose, onImported }: ZipIm
           <div className="import-complete">
             <CheckCircle2 size={38} />
             <h3>Import complete</h3>
-            <p>{mode === "hierarchy" ? "The archive was preserved and its folder structure is now part of your library." : "The original file was preserved and added to your document library."}</p>
+            <p>{mode === "hierarchy" ? "The archive was preserved and its folder structure is now part of your library." : "The original files were preserved and added to your document library."}</p>
             <dl>
               <div><dt>Documents</dt><dd>{summary.documentsImported}</dd></div>
               <div><dt>Categories</dt><dd>{summary.categoriesCreated}</dd></div>
@@ -131,13 +142,13 @@ export function ZipImportDialog({ open, categories, onClose, onImported }: ZipIm
             <div aria-label="Import type" className="import-tabs" role="tablist">
               <button
                 aria-selected={mode === "document"}
-                onClick={() => { setMode("document"); setArchive(undefined); setError(undefined); }}
+                onClick={() => { setMode("document"); setFiles([]); setError(undefined); }}
                 role="tab"
                 type="button"
-              ><FileUp size={16} /> Single document</button>
+              ><FileUp size={16} /> Documents</button>
               <button
                 aria-selected={mode === "hierarchy"}
-                onClick={() => { setMode("hierarchy"); setArchive(undefined); setError(undefined); }}
+                onClick={() => { setMode("hierarchy"); setFiles([]); setError(undefined); }}
                 role="tab"
                 type="button"
               ><FolderTree size={16} /> Folder ZIP</button>
@@ -153,7 +164,8 @@ export function ZipImportDialog({ open, categories, onClose, onImported }: ZipIm
             <input
               accept={mode === "hierarchy" ? ".zip,application/zip" : ".pdf,.docx,.xlsx,.pptx,.odt,.ods,.odp,.txt,.jpg,.jpeg,.png,.tif,.tiff"}
               className="sr-only"
-              onChange={(event) => selectFile(event.target.files?.[0])}
+              multiple={mode === "document"}
+              onChange={(event) => selectFiles(Array.from(event.target.files ?? []))}
               ref={input}
               type="file"
             />
@@ -166,11 +178,11 @@ export function ZipImportDialog({ open, categories, onClose, onImported }: ZipIm
               onDrop={drop}
               type="button"
             >
-              <span>{archive ? (mode === "hierarchy" ? <FileArchive size={27} /> : <FileUp size={27} />) : <Upload size={27} />}</span>
-              {archive ? (
-                <><strong>{archive.name}</strong><small>{formatBytes(archive.size)} selected</small></>
+              <span>{files.length ? (mode === "hierarchy" ? <FileArchive size={27} /> : <FileUp size={27} />) : <Upload size={27} />}</span>
+              {files.length ? (
+                <><strong>{files.length === 1 ? files[0]!.name : `${files.length} documents selected`}</strong><small>{formatBytes(files.reduce((total, file) => total + file.size, 0))} selected</small></>
               ) : (
-                <><strong>{mode === "hierarchy" ? "Drop a ZIP archive here" : "Drop a document here"}</strong><small>or choose a file, up to {mode === "hierarchy" ? "256" : "100"} MiB</small></>
+                <><strong>{mode === "hierarchy" ? "Drop a ZIP archive here" : "Drop documents here"}</strong><small>or choose files, up to {mode === "hierarchy" ? "256" : "100"} MiB each</small></>
               )}
             </button>
 
@@ -197,8 +209,8 @@ export function ZipImportDialog({ open, categories, onClose, onImported }: ZipIm
 
             <footer className="dialog-actions">
               <button className="dialog-cancel" disabled={submitting} onClick={close} type="button">Cancel</button>
-              <button className="dialog-submit" disabled={!archive || submitting} type="submit">
-                {submitting ? "Validating and importing..." : mode === "hierarchy" ? "Import hierarchy" : "Upload document"}
+              <button className="dialog-submit" disabled={files.length === 0 || submitting} type="submit">
+                {submitting ? "Validating and importing..." : mode === "hierarchy" ? "Import hierarchy" : "Upload documents"}
               </button>
             </footer>
           </form>

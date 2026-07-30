@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { AppShell, type WorkspaceSection } from "../components/layout/AppShell";
 import { LoginPage } from "../features/auth/LoginPage";
+import { BindersPage } from "../features/binders/BindersPage";
 import { CategoriesPage } from "../features/categories/CategoriesPage";
 import { DashboardPage } from "../features/dashboard/DashboardPage";
 import { ZipImportDialog } from "../features/imports/ZipImportDialog";
@@ -128,11 +129,12 @@ export function App() {
         <LibraryPage documents={documents} loading={catalogLoading} onQueryChange={setQuery} query={query} />
       )}
       {activeSection === "categories" && <CategoriesPage categories={categories} loading={catalogLoading} />}
-      {(activeSection === "binders" || activeSection === "activity") && (
+      {activeSection === "binders" && <BindersPage />}
+      {activeSection === "activity" && (
         <section className="planned-workspace">
           <p className="eyebrow">Next workspace</p>
-          <h1>{activeSection === "binders" ? "Binder studio" : "Activity log"}</h1>
-          <p>{activeSection === "binders" ? "Binder composition will build on published document versions from your library." : "Uploads, approvals, and releases will be presented as a permanent audit timeline."}</p>
+          <h1>Activity log</h1>
+          <p>Uploads, approvals, and releases will be presented as a permanent audit timeline.</p>
         </section>
       )}
       <ZipImportDialog

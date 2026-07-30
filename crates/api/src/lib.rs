@@ -8,8 +8,8 @@ use axum::{
     routing::{get, post},
 };
 use elrond_application::{
-    AuthError, AuthService, CatalogError, CatalogService, ImportError, ImportService,
-    LibraryService,
+    AuthError, AuthService, BinderError, BinderService, CatalogError, CatalogService, ImportError,
+    ImportService, LibraryService,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -20,6 +20,7 @@ pub struct ApiState {
     pub auth: AuthService,
     pub imports: ImportService,
     pub catalog: CatalogService,
+    pub binders: BinderService,
     pub secure_cookies: bool,
 }
 
@@ -40,9 +41,10 @@ pub fn router(state: ApiState) -> Router {
             "/api/v1/documents",
             get(documents)
                 .post(upload_document)
-                .layer(DefaultBodyLimit::max(110 * 1024 * 1024)),
+                .layer(DefaultBodyLimit::max(256 * 1024 * 1024)),
         )
         .route("/api/v1/categories", get(categories))
+        .route("/api/v1/binders/printable.pdf", get(printable_binder))
         .with_state(state)
 }
 
@@ -229,9 +231,9 @@ async fn upload_document(
     State(state): State<ApiState>,
     headers: HeaderMap,
     mut multipart: Multipart,
-) -> Result<Json<impl Serialize>, (StatusCode, Json<Value>)> {
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let user = authenticated_user(&state, &headers).await?;
-    let mut file = None;
+    let mut files = Vec::new();
     let mut category_path = Vec::new();
     while let Some(field) = multipart.next_field().await.map_err(|_| {
         (
@@ -253,7 +255,7 @@ async fn upload_document(
                         Json(json!({ "error": "The document could not be read." })),
                     )
                 })?;
-                file = Some((filename, content.to_vec()));
+                files.push((filename, content.to_vec()));
             }
             Some("categoryPath") => {
                 let value = field.text().await.map_err(|_| {
@@ -272,18 +274,33 @@ async fn upload_document(
             _ => {}
         }
     }
-    let (filename, content) = file.ok_or_else(|| {
-        (
+    if files.is_empty() {
+        return Err((
             StatusCode::BAD_REQUEST,
-            Json(json!({ "error": "Choose a document to upload." })),
-        )
-    })?;
-    state
-        .imports
-        .import_file(content, &filename, category_path, &user.id)
-        .await
-        .map(Json)
-        .map_err(import_error_response)
+            Json(json!({ "error": "Choose one or more documents to upload." })),
+        ));
+    }
+    let mut imported = 0;
+    let mut categories_created = 0;
+    let mut duplicates = 0;
+    let mut unsupported = 0;
+    for (filename, content) in files {
+        let summary = state
+            .imports
+            .import_file(content, &filename, category_path.clone(), &user.id)
+            .await
+            .map_err(import_error_response)?;
+        imported += summary.documents_imported;
+        categories_created += summary.categories_created;
+        duplicates += summary.duplicates_skipped;
+        unsupported += summary.unsupported_skipped;
+    }
+    Ok(Json(json!({
+        "categoriesCreated": categories_created,
+        "documentsImported": imported,
+        "duplicatesSkipped": duplicates,
+        "unsupportedSkipped": unsupported,
+    })))
 }
 
 async fn categories(
@@ -297,6 +314,31 @@ async fn categories(
         .await
         .map(Json)
         .map_err(catalog_error_response)
+}
+
+async fn printable_binder(
+    State(state): State<ApiState>,
+    headers: HeaderMap,
+) -> Result<(HeaderMap, Vec<u8>), (StatusCode, Json<Value>)> {
+    authenticated_user(&state, &headers).await?;
+    let binder = state
+        .binders
+        .generate_printable()
+        .await
+        .map_err(binder_error_response)?;
+    let mut response_headers = HeaderMap::new();
+    response_headers.insert("content-type", HeaderValue::from_static("application/pdf"));
+    response_headers.insert(
+        "content-disposition",
+        HeaderValue::from_str(&format!("attachment; filename=\"{}\"", binder.filename))
+            .map_err(|_| binder_error_response(BinderError::Render("invalid filename".into())))?,
+    );
+    response_headers.insert(
+        "content-length",
+        HeaderValue::from_str(&binder.content.len().to_string())
+            .map_err(|_| binder_error_response(BinderError::Render("invalid length".into())))?,
+    );
+    Ok((response_headers, binder.content))
 }
 
 async fn authenticated_user(
@@ -377,6 +419,21 @@ fn import_error_response(error: ImportError) -> (StatusCode, Json<Value>) {
         | ImportError::Extraction => StatusCode::UNPROCESSABLE_ENTITY,
         ImportError::Repository(_) => {
             tracing::error!(error = %error, "ZIP import failed");
+            StatusCode::INTERNAL_SERVER_ERROR
+        }
+    };
+    (status, Json(json!({ "error": error.to_string() })))
+}
+
+fn binder_error_response(error: BinderError) -> (StatusCode, Json<Value>) {
+    let status = match error {
+        BinderError::Empty => StatusCode::UNPROCESSABLE_ENTITY,
+        BinderError::InvalidSource | BinderError::Render(_) => {
+            tracing::error!(%error, "binder generation failed");
+            StatusCode::UNPROCESSABLE_ENTITY
+        }
+        BinderError::Repository(_) => {
+            tracing::error!(%error, "binder source loading failed");
             StatusCode::INTERNAL_SERVER_ERROR
         }
     };

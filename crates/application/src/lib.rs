@@ -10,6 +10,7 @@ use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier, password_ha
 use async_trait::async_trait;
 use elrond_domain::{
     auth::{AuthenticatedUser, InitialAdmin, NewSession, UserCredentials},
+    binders::{GeneratedBinder, PrintableBinderDocument},
     catalog::{CategorySummary, DocumentSummary},
     conversions::{ConversionJob, PdfDerivative},
     imports::{ImportSummary, PreparedDocument, PreparedImport},
@@ -83,6 +84,18 @@ pub enum ConversionError {
     InvalidPdf,
 }
 
+#[derive(Debug, Error)]
+pub enum BinderError {
+    #[error("there are no PDF-ready documents to include")]
+    Empty,
+    #[error("a binder source PDF is missing or no longer matches its checksum")]
+    InvalidSource,
+    #[error("the printable binder could not be generated: {0}")]
+    Render(String),
+    #[error("the binder library could not be loaded")]
+    Repository(#[source] Box<dyn std::error::Error + Send + Sync>),
+}
+
 #[async_trait]
 pub trait LibraryRepository: Send + Sync {
     async fn overview(
@@ -148,6 +161,15 @@ pub trait DocumentConverter: Send + Sync {
     ) -> Result<Vec<u8>, ConversionError>;
 }
 
+#[async_trait]
+pub trait BinderRepository: Send + Sync {
+    async fn printable_documents(&self) -> Result<Vec<PrintableBinderDocument>, BinderError>;
+}
+
+pub trait BinderRenderer: Send + Sync {
+    fn render(&self, documents: Vec<PrintableBinderDocument>) -> Result<Vec<u8>, BinderError>;
+}
+
 #[derive(Clone)]
 pub struct LibraryService {
     repository: Arc<dyn LibraryRepository>,
@@ -179,6 +201,47 @@ pub struct CatalogService {
 pub struct ConversionService {
     repository: Arc<dyn ConversionJobRepository>,
     converter: Arc<dyn DocumentConverter>,
+}
+
+#[derive(Clone)]
+pub struct BinderService {
+    repository: Arc<dyn BinderRepository>,
+    renderer: Arc<dyn BinderRenderer>,
+    gate: Arc<tokio::sync::Semaphore>,
+}
+
+impl BinderService {
+    pub fn new(repository: Arc<dyn BinderRepository>, renderer: Arc<dyn BinderRenderer>) -> Self {
+        Self {
+            repository,
+            renderer,
+            gate: Arc::new(tokio::sync::Semaphore::new(1)),
+        }
+    }
+
+    pub async fn generate_printable(&self) -> Result<GeneratedBinder, BinderError> {
+        let _permit =
+            self.gate.clone().try_acquire_owned().map_err(|_| {
+                BinderError::Render("another binder is already being generated".into())
+            })?;
+        let documents = self.repository.printable_documents().await?;
+        if documents.is_empty() {
+            return Err(BinderError::Empty);
+        }
+        let renderer = self.renderer.clone();
+        let content = tokio::task::spawn_blocking(move || renderer.render(documents))
+            .await
+            .map_err(|error| BinderError::Render(error.to_string()))??;
+        if !content.starts_with(b"%PDF-") {
+            return Err(BinderError::Render(
+                "the renderer returned an invalid PDF".into(),
+            ));
+        }
+        Ok(GeneratedBinder {
+            filename: "elrond-library-binder.pdf".into(),
+            content,
+        })
+    }
 }
 
 impl ConversionService {

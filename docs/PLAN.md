@@ -228,10 +228,11 @@ automated accessibility checks, and visual regression tests.
 Development uses small Conventional Commits. Semantic-version milestones are:
 
 - `v0.1.0`: architecture, design system, authentication, and deployment.
-- `v0.2.0`: ingestion, categories, tags, search, and viewing.
-- `v0.3.0`: versions, review workflow, annotations, and dashboard.
-- `v0.4.0`: binder designer and reproducible PDF generation.
-- `v0.5.0`: audit, import/export, backup, and restore.
+- `v0.2.0`: individual upload and browsable document catalog.
+- `v0.3.0`: persistent PDF conversion jobs and Stirling-PDF integration.
+- `v0.4.0`: basic categorized printable binder generation.
+- `v0.5.0`: custom binder designer, ordering, templates, and saved releases.
+- `v0.6.0`: audit, import/export, backup, and restore.
 - `v0.9.0`: security, accessibility, migration, and performance hardening.
 - `v1.0.0`: complete supported release.
 

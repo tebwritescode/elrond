@@ -936,6 +936,43 @@ h1 {
 .pdf-ready { color: var(--forest); }
 .pdf-pending { color: var(--amber); }
 
+.binder-sheet {
+  display: grid;
+  grid-template-columns: 120px 1fr;
+  gap: 36px;
+  align-items: start;
+  padding: clamp(28px, 5vw, 64px);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow);
+}
+
+.binder-mark {
+  display: grid;
+  place-items: center;
+  width: 120px;
+  height: 156px;
+  color: var(--forest);
+  background: var(--forest-soft);
+  border: 1px solid #c2d1ca;
+  border-left: 9px solid var(--forest);
+  border-radius: 4px 12px 12px 4px;
+}
+
+.binder-copy { max-width: 690px; }
+.binder-copy h2 { margin: 4px 0 12px; font-size: clamp(25px, 3vw, 38px); }
+.binder-copy > p { color: var(--ink-muted); line-height: 1.7; }
+.binder-facts { display: flex; flex-wrap: wrap; gap: 12px 28px; margin: 25px 0; }
+.binder-facts span { display: inline-flex; align-items: center; gap: 7px; color: var(--forest); }
+.binder-note { padding: 10px 12px; background: #f5ecdc; border-left: 3px solid var(--amber); }
+.binder-copy .primary-button { display: inline-flex; align-items: center; gap: 8px; margin-top: 12px; }
+
+@media (max-width: 650px) {
+  .binder-sheet { grid-template-columns: 1fr; }
+  .binder-mark { width: 86px; height: 108px; }
+}
+
 .library-empty {
   display: flex;
   flex-direction: column;

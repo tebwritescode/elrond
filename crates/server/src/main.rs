@@ -3,9 +3,11 @@ use std::{env, net::SocketAddr, path::Path, sync::Arc};
 use axum::Router;
 use elrond_api::ApiState;
 use elrond_application::{
-    AuthService, CatalogService, ConversionService, ImportService, LibraryService,
+    AuthService, BinderService, CatalogService, ConversionService, ImportService, LibraryService,
 };
-use elrond_infrastructure::{sqlite::SqliteLibraryRepository, stirling::StirlingPdfConverter};
+use elrond_infrastructure::{
+    binders::LopdfBinderRenderer, sqlite::SqliteLibraryRepository, stirling::StirlingPdfConverter,
+};
 use tower_http::{
     compression::CompressionLayer,
     services::{ServeDir, ServeFile},
@@ -32,6 +34,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let auth = AuthService::new(repository.clone());
     let imports = ImportService::new(repository.clone());
     let catalog = CatalogService::new(repository.clone());
+    let binders = BinderService::new(repository.clone(), Arc::new(LopdfBinderRenderer));
     if let Some(stirling_url) = stirling_url {
         let api_key = env::var("STIRLING_API_KEY").ok();
         let converter = Arc::new(StirlingPdfConverter::new(&stirling_url, api_key)?);
@@ -63,6 +66,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             auth,
             imports,
             catalog,
+            binders,
             secure_cookies,
         }))
         .fallback_service(static_files)

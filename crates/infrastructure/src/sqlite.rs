@@ -1,17 +1,23 @@
-use std::{collections::HashMap, path::PathBuf};
+use std::{
+    collections::HashMap,
+    path::{Component, Path, PathBuf},
+};
 
 use async_trait::async_trait;
 use elrond_application::{
-    ApplicationError, AuthError, AuthRepository, CatalogError, CatalogRepository, ConversionError,
-    ConversionJobRepository, ImportError, ImportRepository, LibraryRepository,
+    ApplicationError, AuthError, AuthRepository, BinderError, BinderRepository, CatalogError,
+    CatalogRepository, ConversionError, ConversionJobRepository, ImportError, ImportRepository,
+    LibraryRepository,
 };
 use elrond_domain::{
     auth::{AuthenticatedUser, InitialAdmin, NewSession, UserCredentials},
+    binders::PrintableBinderDocument,
     catalog::{CategorySummary, DocumentSummary},
     conversions::{ConversionJob, ConversionStatus, PdfDerivative},
     imports::{ImportSummary, PreparedImport},
     library::LibraryOverview,
 };
+use sha2::{Digest, Sha256};
 use sqlx::{Sqlite, SqlitePool, Transaction, sqlite::SqlitePoolOptions};
 use uuid::Uuid;
 
@@ -96,6 +102,58 @@ impl CatalogRepository for SqliteLibraryRepository {
                 .collect()
         })
         .map_err(catalog_repository_error)
+    }
+}
+
+#[async_trait]
+impl BinderRepository for SqliteLibraryRepository {
+    async fn printable_documents(&self) -> Result<Vec<PrintableBinderDocument>, BinderError> {
+        let rows = sqlx::query_as::<_, (String, String, i64, String, String)>(
+            "WITH RECURSIVE category_paths(id, path, sort_path) AS (SELECT id, name, printf('%010d:%s:%s', sort_order, lower(name), id) FROM categories WHERE parent_id IS NULL UNION ALL SELECT child.id, parent.path || ' / ' || child.name, parent.sort_path || '/' || printf('%010d:%s:%s', child.sort_order, lower(child.name), child.id) FROM categories child JOIN category_paths parent ON parent.id = child.parent_id) SELECT documents.title, COALESCE(category_paths.path, 'Unfiled'), document_versions.version_number, document_versions.pdf_sha256, document_versions.pdf_storage_key FROM documents LEFT JOIN category_paths ON category_paths.id = documents.category_id JOIN document_versions ON document_versions.document_id = documents.id WHERE document_versions.version_number = (SELECT MAX(latest.version_number) FROM document_versions latest WHERE latest.document_id = documents.id) AND document_versions.pdf_storage_key IS NOT NULL AND document_versions.pdf_sha256 IS NOT NULL ORDER BY COALESCE(category_paths.sort_path, '~'), documents.title COLLATE NOCASE, documents.id",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(binder_repository_error)?;
+
+        let mut documents = Vec::with_capacity(rows.len());
+        let mut total_bytes = 0_u64;
+        for (title, category_path, version_number, pdf_sha256, pdf_storage_key) in rows {
+            let key = Path::new(&pdf_storage_key);
+            if !key
+                .components()
+                .all(|component| matches!(component, Component::Normal(_)))
+            {
+                return Err(BinderError::InvalidSource);
+            }
+            let path = self.data_dir.join(key);
+            let size = tokio::fs::metadata(&path)
+                .await
+                .map_err(|_| BinderError::InvalidSource)?
+                .len();
+            total_bytes = total_bytes
+                .checked_add(size)
+                .ok_or(BinderError::InvalidSource)?;
+            if total_bytes > 512 * 1024 * 1024 {
+                return Err(BinderError::Render(
+                    "the binder exceeds the 512 MiB source limit".into(),
+                ));
+            }
+            let pdf_content = tokio::fs::read(path)
+                .await
+                .map_err(|_| BinderError::InvalidSource)?;
+            if hex::encode(Sha256::digest(&pdf_content)) != pdf_sha256 {
+                return Err(BinderError::InvalidSource);
+            }
+            documents.push(PrintableBinderDocument {
+                title,
+                category_path,
+                version_number,
+                pdf_sha256,
+                pdf_storage_key,
+                pdf_content,
+            });
+        }
+        Ok(documents)
     }
 }
 
@@ -549,6 +607,10 @@ fn conversion_repository_error(
     error: impl std::error::Error + Send + Sync + 'static,
 ) -> ConversionError {
     ConversionError::Repository(Box::new(error))
+}
+
+fn binder_repository_error(error: sqlx::Error) -> BinderError {
+    BinderError::Repository(Box::new(error))
 }
 
 fn parse_conversion_status(status: &str) -> ConversionStatus {

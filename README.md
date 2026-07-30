@@ -7,6 +7,16 @@ The project is under active development. Its architecture keeps business rules,
 storage, PDF processing, HTTP delivery, and the browser interface in separate
 modules so each can evolve independently.
 
+## Printable Binder
+
+The Binder Studio generates one PDF from every latest PDF-ready document. The
+output contains a page-numbered index, a full-page separator for each category,
+and every page of each document in deterministic category and title order.
+Source PDFs are checksum-verified before assembly and are never modified.
+
+Custom document selection and ordering, binder templates, covers, bookmarks,
+headers, footers, duplex blanks, and saved release history are future features.
+
 ## Development
 
 Requirements:
@@ -37,7 +47,7 @@ docker compose up --build
 ```
 
 The application listens on `http://localhost:3000` and stores its SQLite
-database, immutable originals, derivatives, and generated binders in the
+database, immutable originals, and derivatives in the
 `elrond-data` volume. Set `ELROND_SECURE_COOKIES=true` when the application is
 served through HTTPS.
 

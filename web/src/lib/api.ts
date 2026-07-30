@@ -117,12 +117,12 @@ export async function importZipArchive(
   return response.json() as Promise<ImportSummary>;
 }
 
-export async function uploadDocument(
-  file: File,
+export async function uploadDocuments(
+  files: File[],
   categoryPath: string[],
 ): Promise<ImportSummary> {
   const form = new FormData();
-  form.append("file", file);
+  files.forEach((file) => form.append("file", file));
   form.append("categoryPath", JSON.stringify(categoryPath));
   const response = await fetch("/api/v1/documents", {
     method: "POST",
@@ -151,4 +151,22 @@ export async function fetchCategories(signal?: AbortSignal): Promise<CategorySum
   });
   if (!response.ok) throw new Error("The category tree could not be loaded.");
   return response.json() as Promise<CategorySummary[]>;
+}
+
+export async function downloadPrintableBinder(): Promise<void> {
+  const response = await fetch("/api/v1/binders/printable.pdf", {
+    headers: { Accept: "application/pdf" },
+  });
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(body?.error ?? "The printable binder could not be generated.");
+  }
+  const blobUrl = URL.createObjectURL(await response.blob());
+  const link = document.createElement("a");
+  link.href = blobUrl;
+  link.download = "elrond-library-binder.pdf";
+  document.body.append(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
 }

@@ -8,8 +8,11 @@ rust-version.workspace = true
 
 [dependencies]
 async-trait.workspace = true
+deunicode.workspace = true
 elrond-application = { path = "../application" }
 elrond-domain = { path = "../domain" }
+hex.workspace = true
+lopdf.workspace = true
 reqwest.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
