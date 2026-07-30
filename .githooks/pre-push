@@ -13,7 +13,7 @@ fail() {
 is_public=0
 case "$remote_url" in
     *github.com*) is_public=1 ;;
-    *10.0.0.0*) is_public=0 ;;
+    http://10.*|https://10.*) is_public=0 ;;
     *) is_public=1 ;;
 esac
 
@@ -59,7 +59,7 @@ if git log --no-color --format='%an <%ae>%n%cn <%ce>' $ranges 2>/dev/null \
 fi
 
 if [ "$is_public" -eq 1 ]; then
-    internal_pattern='10\.94\.18\.85|100\.107\.54\.40|100\.80\.62\.101|teb\.dog|heisenberg'
+    internal_pattern='10\.[0-9]{1,3}(\.[0-9]{1,3}){2}|100\.[0-9]{1,3}(\.[0-9]{1,3}){2}|teb\.dog|tailscale|heisenberg'
     for range in $ranges; do
         tip="${range##*..}"
         # shellcheck disable=SC2086
