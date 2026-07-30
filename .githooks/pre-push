@@ -1,0 +1,92 @@
+#!/bin/sh
+# Sanitisation gate shared with the independent alt implementation.
+
+set -eu
+
+remote_name="${1:-}"
+remote_url="${2:-}"
+
+fail() {
+    printf 'pre-push blocked: %s\n' "$1" >&2
+}
+
+is_public=0
+case "$remote_url" in
+    *github.com*) is_public=1 ;;
+    *10.0.0.0*) is_public=0 ;;
+    *) is_public=1 ;;
+esac
+
+ranges=''
+while read -r _local_ref local_sha _remote_ref remote_sha; do
+    case "$local_sha" in
+        *[!0]*) ;;
+        *) continue ;;
+    esac
+    case "$remote_sha" in
+        *[!0]*) ranges="$ranges $remote_sha..$local_sha" ;;
+        *) ranges="$ranges $local_sha" ;;
+    esac
+done
+
+[ -n "$ranges" ] || exit 0
+status=0
+self='
+:(exclude).githooks/pre-push
+:(exclude)docs/publishing.md
+'
+
+secret_pattern='ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|dckr_pat_[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----|xox[baprs]-[A-Za-z0-9-]{10,}'
+# shellcheck disable=SC2086
+if git log --no-color -p -E -G "$secret_pattern" $ranges -- . $self 2>/dev/null \
+    | grep -Eq "$secret_pattern"; then
+    fail "a credential or private key appears in the commits being pushed."
+    status=1
+fi
+
+identity_pattern='@gmail\.com|timmer1992'
+# shellcheck disable=SC2086
+if git log --no-color -p -E -G "$identity_pattern" $ranges -- . $self 2>/dev/null \
+    | grep -Eq "$identity_pattern"; then
+    fail "a personal email address appears in the commits being pushed."
+    status=1
+fi
+# shellcheck disable=SC2086
+if git log --no-color --format='%an <%ae>%n%cn <%ce>' $ranges 2>/dev/null \
+    | grep -Eq "$identity_pattern"; then
+    fail "a commit in this push is authored under a personal email address."
+    status=1
+fi
+
+if [ "$is_public" -eq 1 ]; then
+    internal_pattern='10\.94\.18\.85|100\.107\.54\.40|100\.80\.62\.101|teb\.dog|heisenberg'
+    for range in $ranges; do
+        tip="${range##*..}"
+        # shellcheck disable=SC2086
+        if git grep --no-color -I -E -q "$internal_pattern" "$tip" -- . $self 2>/dev/null; then
+            fail "an internal address or hostname is present in the tree being pushed to a public remote."
+            git grep --no-color -I -n -E "$internal_pattern" "$tip" -- . $self 2>/dev/null \
+                | sed 's/^/    /' >&2
+            status=1
+            break
+        fi
+    done
+
+    for range in $ranges; do
+        tip="${range##*..}"
+        tracked=$(git ls-tree -r --name-only "$tip" 2>/dev/null | grep -E '^(\.env$|dev-data/|data/|.*\.db$|.*\.pem$|.*\.key$)' || true)
+        if [ -n "$tracked" ]; then
+            fail "runtime state or a secret file is tracked in the tree being pushed."
+            printf '%s\n' "$tracked" | sed 's/^/    /' >&2
+            status=1
+            break
+        fi
+    done
+fi
+
+if [ "$status" -ne 0 ]; then
+    printf 'Remote: %s (%s)\n' "$remote_name" "$remote_url" >&2
+    exit 1
+fi
+
+exit 0

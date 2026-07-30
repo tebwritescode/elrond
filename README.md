@@ -52,8 +52,10 @@ database, immutable originals, and derivatives in the
 served through HTTPS.
 
 Docker Hub publication is handled by GitHub Actions. The repository must define
-`DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` secrets. Pushes to `main` publish the
-`edge` tag; semantic-version tags publish version aliases and `latest`.
+`DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` secrets. While both independent
+implementations remain in beta, this primary branch publishes only `beta` and
+`<semver>-beta`; it never publishes `latest`. The canonical publishing contract
+is `docs/publishing.md` on the GitHub `alt` branch.
 
 ## License
 
