@@ -595,6 +595,185 @@
   gap: var(--el-space-4);
 }
 
+/* ----------------------------------------------------------- Library layout */
+
+.el-library {
+  display: grid;
+  grid-template-columns: 15rem 1fr;
+  gap: var(--el-space-6);
+  align-items: start;
+}
+
+.el-library__aside {
+  /* Sticks while the table scrolls, so the tree stays reachable in a long list. */
+  position: sticky;
+  top: var(--el-space-2);
+  max-height: calc(100dvh - var(--el-header-height) - var(--el-space-6));
+  overflow-y: auto;
+  padding-right: var(--el-space-2);
+}
+
+.el-library__main {
+  min-width: 0;
+}
+
+/* Below this width the tree stacks above the table rather than being squeezed. */
+@media (width <= 62rem) {
+  .el-library {
+    grid-template-columns: 1fr;
+    gap: var(--el-space-5);
+  }
+
+  .el-library__aside {
+    position: static;
+    max-height: none;
+    padding-bottom: var(--el-space-4);
+    border-bottom: 1px solid var(--el-rule);
+  }
+}
+
+/* --------------------------------------------------------------- Category tree */
+
+.el-tree {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.el-tree__row {
+  display: flex;
+  align-items: center;
+  gap: var(--el-space-1);
+}
+
+.el-tree__twisty {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 1.25rem;
+  height: 1.75rem;
+  border-radius: var(--el-radius-sm);
+  color: var(--el-ink-muted);
+}
+
+.el-tree__twisty:hover {
+  color: var(--el-ink);
+}
+
+.el-tree__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--el-space-2);
+  flex: 1;
+  min-width: 0;
+  min-height: 1.75rem;
+  padding: 0 var(--el-space-2);
+  border-radius: var(--el-radius-sm);
+  font-size: var(--el-text-sm);
+  text-align: left;
+  color: var(--el-ink);
+}
+
+.el-tree__item:hover {
+  background: var(--el-paper-sunken);
+}
+
+/* The selected category is marked by weight and a rule as well as by colour. */
+.el-tree__item[aria-current='true'] {
+  background: var(--el-accent-wash);
+  box-shadow: inset 2px 0 0 var(--el-accent);
+  color: var(--el-accent);
+  font-weight: 650;
+}
+
+.el-tree__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.el-tree__count {
+  flex: none;
+  font-size: var(--el-text-2xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--el-ink-muted);
+}
+
+.el-tree__item[aria-current='true'] .el-tree__count {
+  color: var(--el-accent);
+}
+
+/* ------------------------------------------------------------------ Tag filter */
+
+.el-tag-filter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--el-space-1);
+}
+
+.el-tag-filter__tag {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--el-space-1);
+  min-height: 1.75rem;
+  padding: 0 var(--el-space-2);
+  background: var(--el-paper-sunken);
+  border: 1px solid var(--el-rule);
+  border-radius: 999px;
+  color: var(--el-ink-muted);
+  font-size: var(--el-text-xs);
+}
+
+.el-tag-filter__tag:hover {
+  color: var(--el-ink);
+}
+
+/* Selected tags are outlined and bolder, not merely tinted. */
+.el-tag-filter__tag[aria-pressed='true'] {
+  background: var(--el-accent-wash);
+  border-color: var(--el-accent);
+  color: var(--el-accent);
+  font-weight: 650;
+}
+
+.el-tag-filter__tag[aria-pressed='true'] .el-tree__count {
+  color: var(--el-accent);
+}
+
+/* --------------------------------------------------------------------- Toolbar */
+
+.el-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--el-space-4);
+}
+
+/* ------------------------------------------------------------- Table additions */
+
+.el-table__title {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  font-size: var(--el-text-sm);
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--el-ink);
+}
+
+.el-table__filename {
+  font-family: var(--el-font-mono);
+  font-size: var(--el-text-2xs);
+  font-weight: 400;
+  color: var(--el-ink-muted);
+}
+
 /* ------------------------------------------------------------- Theme toggle */
 
 .el-theme-toggle {

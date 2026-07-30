@@ -11,12 +11,13 @@ versions, and publishing reproducible professional binders.
 
 ## Status
 
-`v0.1.0` — architecture, design system, authentication, and deployment.
+`v0.1.0` is released. `v0.2.0` is in progress: ingestion, categories, tags, and
+search work end to end; the browser PDF viewer and ZIP import are still to come.
 
 | Milestone | Scope | State |
 | --- | --- | --- |
-| `v0.1.0` | Architecture, design system, authentication, deployment | **current** |
-| `v0.2.0` | Ingestion, categories, tags, search, viewing | planned |
+| `v0.1.0` | Architecture, design system, authentication, deployment | **released** |
+| `v0.2.0` | Ingestion, categories, tags, search, viewing | **in progress** |
 | `v0.3.0` | Versions, review workflow, annotations, dashboard | planned |
 | `v0.4.0` | Binder designer and reproducible PDF generation | planned |
 | `v0.5.0` | Audit, import/export, backup, restore | planned |
@@ -124,6 +125,15 @@ The ones worth understanding:
   other contact detail, so there is nothing to verify and nothing to leak.
 - Audit records are append-only in the schema itself, enforced by triggers, so no
   code path can rewrite history.
+- A filename never influences a storage path. Storage keys are derived from the
+  content checksum, and a key read back from the database is re-verified against
+  its own digest before it is used.
+- A file's type is decided by its contents, not by its extension or by what the
+  client claimed. A `.pdf` that is really a ZIP is refused rather than stored.
+- Document versions are immutable, and generated PDF derivatives are write-once,
+  both enforced by database triggers rather than only in Rust.
+- Search input is rewritten into a safe query expression, so neither an
+  unbalanced quote nor a planted `OR` can change what a search means.
 
 ## Quality gates
 

@@ -215,6 +215,150 @@ export interface Health {
   readonly version: string;
 }
 
+/** Where a document sits in its editorial workflow. */
+export type Lifecycle = 'draft' | 'in_review' | 'published' | 'superseded' | 'archived';
+
+/** A node in the category tree, with its children nested. */
+export interface CategoryNode {
+  readonly id: string;
+  readonly name: string;
+  /** Documents filed directly here. */
+  readonly document_count: number;
+  /** Documents here and everywhere beneath. */
+  readonly total_document_count: number;
+  readonly children: readonly CategoryNode[];
+}
+
+/** A tag with how many documents carry it. */
+export interface TagCount {
+  readonly id: string;
+  readonly label: string;
+  readonly document_count: number;
+}
+
+/** One immutable version of a document. */
+export interface VersionView {
+  readonly id: string;
+  readonly number: number;
+  readonly filename: string;
+  readonly media_type: string;
+  readonly byte_size: number;
+  readonly checksum: string;
+  /** Whether a PDF is available to view. */
+  readonly has_pdf: boolean;
+  /** Whether a PDF copy still has to be generated. */
+  readonly awaiting_conversion: boolean;
+  readonly note: string | null;
+  readonly created_at: string;
+}
+
+/** A document as the API renders it. Never carries a storage key. */
+export interface DocumentView {
+  readonly id: string;
+  readonly title: string;
+  readonly category_id: string;
+  readonly category_name: string;
+  readonly lifecycle: Lifecycle;
+  readonly version_count: number;
+  readonly current_version: VersionView;
+  readonly tags: readonly { readonly id: string; readonly label: string }[];
+  readonly source_path: string | null;
+  readonly review_due_at: string | null;
+  readonly created_at: string;
+  readonly updated_at: string;
+}
+
+/** One page of a listing. */
+export interface DocumentPage {
+  readonly documents: readonly DocumentView[];
+  readonly total: number;
+  readonly limit: number;
+  readonly offset: number;
+}
+
+/** A document with its full version history. */
+export type DocumentDetail = DocumentView & { readonly versions: readonly VersionView[] };
+
+/** The result of an upload. */
+export interface UploadResult {
+  readonly document: DocumentView;
+  /** Whether the bytes were already stored and were reused. */
+  readonly deduplicated: boolean;
+  /** An existing document with identical content, if any. */
+  readonly duplicate_of: string | null;
+}
+
+/** Filters for a document listing. */
+export interface DocumentQuery {
+  readonly q?: string;
+  readonly categoryId?: string;
+  readonly includeDescendants?: boolean;
+  readonly tagIds?: readonly string[];
+  readonly sort?: 'title' | 'created' | 'updated' | 'size' | 'relevance';
+  readonly order?: 'asc' | 'desc';
+  readonly limit?: number;
+  readonly offset?: number;
+}
+
+/** Renders a listing filter as a query string. */
+function toSearchParams(query: DocumentQuery): string {
+  const params = new URLSearchParams();
+  if (query.q) params.set('q', query.q);
+  if (query.categoryId) params.set('category_id', query.categoryId);
+  if (query.includeDescendants === false) params.set('include_descendants', 'false');
+  if (query.tagIds && query.tagIds.length > 0) params.set('tags', query.tagIds.join(','));
+  if (query.sort) params.set('sort', query.sort);
+  if (query.order) params.set('order', query.order);
+  if (query.limit !== undefined) params.set('limit', String(query.limit));
+  if (query.offset !== undefined) params.set('offset', String(query.offset));
+  const rendered = params.toString();
+  return rendered === '' ? '' : `?${rendered}`;
+}
+
+/** Fields an upload can carry alongside the file. */
+export interface UploadFields {
+  readonly file: File;
+  readonly categoryId?: string | undefined;
+  readonly title?: string | undefined;
+  readonly tags?: readonly string[] | undefined;
+}
+
+/**
+ * Performs a multipart upload.
+ *
+ * `Content-Type` is deliberately not set: the browser has to add it itself so the
+ * generated multipart boundary matches the body it produced.
+ */
+async function postMultipart<T>(path: string, fields: UploadFields): Promise<T> {
+  const form = new FormData();
+  form.set('file', fields.file, fields.file.name);
+  if (fields.categoryId) form.set('category_id', fields.categoryId);
+  if (fields.title) form.set('title', fields.title);
+  if (fields.tags && fields.tags.length > 0) form.set('tags', fields.tags.join(','));
+
+  const headers = new Headers();
+  if (csrfToken !== null) {
+    headers.set(CSRF_HEADER, csrfToken);
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE}${path}`, {
+      method: 'POST',
+      headers,
+      credentials: 'same-origin',
+      body: form,
+    });
+  } catch (cause) {
+    throw new NetworkError(cause);
+  }
+
+  if (!response.ok) {
+    throw new ApiError(response.status, await readErrorBody(response));
+  }
+  return (await response.json()) as T;
+}
+
 export const api = {
   /** Reads setup state, the current account, and a CSRF token. */
   async bootstrap(signal?: AbortSignal): Promise<Bootstrap> {
@@ -257,4 +401,81 @@ export const api = {
   health(signal?: AbortSignal): Promise<Health> {
     return request<Health>('/health', signal ? { signal } : {});
   },
+
+  /** Reads the whole category tree with document counts. */
+  categories(): Promise<CategoryNode[]> {
+    return request<CategoryNode[]>('/categories');
+  },
+
+  /** Creates a category. Refuses a duplicate sibling name. */
+  createCategory(name: string, parentId?: string): Promise<{ readonly id: string }> {
+    return request('/categories', {
+      method: 'POST',
+      body: parentId === undefined ? { name } : { name, parent_id: parentId },
+    });
+  },
+
+  /** Deletes an empty category. */
+  deleteCategory(id: string): Promise<void> {
+    return requestNoContent(`/categories/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  },
+
+  /** Reads every tag with its document count. */
+  tags(): Promise<TagCount[]> {
+    return request<TagCount[]>('/tags');
+  },
+
+  /** Lists documents, optionally narrowed by a search query. */
+  documents(query: DocumentQuery = {}): Promise<DocumentPage> {
+    return request<DocumentPage>(`/documents${toSearchParams(query)}`);
+  },
+
+  /** Reads one document with its version history. */
+  document(id: string): Promise<DocumentDetail> {
+    return request<DocumentDetail>(`/documents/${encodeURIComponent(id)}`);
+  },
+
+  /** Uploads a new document. */
+  uploadDocument(fields: UploadFields): Promise<UploadResult> {
+    return postMultipart<UploadResult>('/documents', fields);
+  },
+
+  /** Appends a version to an existing document. */
+  addVersion(id: string, fields: UploadFields): Promise<VersionView> {
+    return postMultipart<VersionView>(`/documents/${encodeURIComponent(id)}/versions`, fields);
+  },
+
+  /** Moves a document through its lifecycle. */
+  transition(id: string, lifecycle: Lifecycle): Promise<DocumentView> {
+    return request<DocumentView>(`/documents/${encodeURIComponent(id)}/lifecycle`, {
+      method: 'POST',
+      body: { lifecycle },
+    });
+  },
+
+  /** Updates title, category, review date, and tags. */
+  updateDocument(
+    id: string,
+    body: {
+      readonly title: string;
+      readonly category_id: string;
+      readonly review_due_at?: string | null;
+      readonly tags: readonly string[];
+    },
+  ): Promise<DocumentView> {
+    return request<DocumentView>(`/documents/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body,
+    });
+  },
 };
+
+/** URL that downloads a version's immutable original. */
+export function originalUrl(versionId: string): string {
+  return `${API_BASE}/versions/${encodeURIComponent(versionId)}/original`;
+}
+
+/** URL that serves a version's PDF inline, for the viewer. */
+export function pdfUrl(versionId: string): string {
+  return `${API_BASE}/versions/${encodeURIComponent(versionId)}/pdf`;
+}

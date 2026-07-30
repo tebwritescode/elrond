@@ -142,6 +142,115 @@ The signed-in account. `401` when there is no valid session.
 
 Every account, oldest first. Administrators only; `403 forbidden` otherwise.
 
+## Library
+
+### `GET /categories`
+
+The whole category tree, nested, with `document_count` (filed directly here) and
+`total_document_count` (here and everything beneath). Returned whole because the
+sidebar renders all of it.
+
+### `POST /categories`
+
+`{ "name": "Policies", "parent_id": null }`. Refuses a duplicate sibling name with
+`409 conflict`; sibling names are compared case-insensitively.
+
+### `PATCH /categories/{id}`
+
+`{ "name": "…", "parent_id": "…" }` — both optional and independent. An explicit
+`"parent_id": null` promotes the category to a root; omitting the key leaves the
+parent alone. A move that would place a category inside its own subtree, or nest
+deeper than 32 levels, is refused with `409 conflict`.
+
+### `DELETE /categories/{id}`
+
+Refuses with `409 conflict` while the category still holds documents or child
+categories, rather than deleting them along with it.
+
+### `GET /tags`
+
+Every tag with its document count, ordered alphabetically.
+
+### `POST /documents`
+
+`multipart/form-data`. Editor role or above.
+
+| Part | Required | Notes |
+| --- | --- | --- |
+| `file` | yes | Must carry a filename. |
+| `category_id` | no | Defaults to the on-demand "Unfiled" root. |
+| `title` | no | Defaults to the filename with its extension dropped. |
+| `tags` | no | Comma separated, or repeated parts. |
+
+Returns `201` with `{ document, deduplicated, duplicate_of }`. `deduplicated`
+reports that the bytes were already stored; `duplicate_of` names an existing
+document with identical content. Neither is an error: the same file legitimately
+belongs in more than one place, but the person uploading it is told.
+
+The file's type is determined from its contents. A recognizable signature that
+disagrees with the extension is `409 conflict`; a file with no signature falls back
+to its extension, which is how plain text, Markdown, and CSV are accepted; an
+unsupported type is `422`. Filenames are sanitized to their basename and never
+influence a storage path.
+
+### `GET /documents`
+
+| Parameter | Notes |
+| --- | --- |
+| `q` | Full-text query over title, filename, tags, and extracted content. |
+| `category_id` | Restrict to a category. |
+| `include_descendants` | Defaults to `true`. |
+| `tags` | Comma-separated tag ids. A document must carry **all** of them. |
+| `sort` | `title`, `created`, `updated`, `size`, or `relevance`. |
+| `order` | `asc` or `desc`. |
+| `limit` | Defaults to 50, capped at 200. |
+| `offset` | Rows to skip. |
+
+Returns `{ documents, total, limit, offset }`. `limit` echoes what was actually
+applied, which may be lower than requested.
+
+With `q` present, ordering defaults to relevance; without it, to recency. The
+query is rewritten into a safe expression: every word must match, punctuation is
+discarded, and FTS5 operators are neutralized, so a query can never produce a
+syntax error and a planted `OR` cannot widen the result set.
+
+A viewer-role account only ever sees published documents, whatever it asks for.
+
+### `GET /documents/{id}`
+
+One document with `versions`, newest first. A draft is `404` for a viewer rather
+than `403`, because confirming that a draft exists is itself a disclosure.
+
+### `PATCH /documents/{id}`
+
+`{ "title", "category_id", "review_due_at", "tags" }`. The tag set is replaced
+wholesale. `review_due_at` is RFC 3339 or `null`. Metadata stays editable after
+publication, because retitling or refiling does not change the bytes a binder
+release pins.
+
+### `POST /documents/{id}/lifecycle`
+
+`{ "lifecycle": "in_review" }`. Publishing needs the reviewer role; everything
+else needs editor. An illegal transition is `422`: a draft cannot be published
+without review, and a published document can never return to an editable state.
+
+### `POST /documents/{id}/versions`
+
+`multipart/form-data`, same parts as an upload. Appends a version and makes it
+current; the previous version is retained because a binder release may pin it.
+Refused with `409 conflict` while the document is in review.
+
+### `GET /versions/{id}/original`
+
+The immutable original, byte-for-byte, as an attachment. Carries an `ETag` derived
+from the content checksum.
+
+### `GET /versions/{id}/pdf`
+
+The PDF to render: the original when it already is one, otherwise the generated
+copy. Served inline so the browser viewer can display it. Returns
+`409 conflict` when a non-PDF has not been converted yet.
+
 ## Roles
 
 A ladder — each role includes everything below it.
