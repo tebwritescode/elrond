@@ -73,9 +73,49 @@ that is not valid semver.
 
 **Sanitise before pushing.** The repository is public. See the checklist below.
 
+## The pre-push hook enforces this
+
+`.githooks/pre-push` blocks a push that would violate the checklist below. Enable
+it once per clone:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+It lives in the repository rather than in `.git/hooks` so it is version controlled
+and applies to everyone who clones, instead of existing on one machine.
+
+Two tiers:
+
+- **Every remote:** credentials (`ghp_`, `github_pat_`, `dckr_pat_`, `AKIA`,
+  `xox…`), private-key headers, and personal email addresses. Searched across
+  every blob in the commits being pushed, not just the final tree, because a
+  credential that was committed and later removed is still published.
+- **Public remotes only:** internal hostnames and addresses, and any tracked
+  `.env`, database, key, or data directory. These are fine on the self-hosted
+  Gitea and are a topology leak on GitHub. Anything that is not the known
+  internal host is treated as public, so a newly added public remote is guarded
+  by default rather than by being remembered.
+
+`git push --no-verify` bypasses it. If you reach for that, fix the finding
+instead.
+
+## Workflow templates for the primary implementation
+
+Ready to copy onto the `main` branch, already carrying the correct trigger scope
+and tag scheme:
+
+- [`docs/templates/main-ci.yml`](templates/main-ci.yml) → `.github/workflows/ci.yml`
+- [`docs/templates/main-release.yml`](templates/main-release.yml) → `.github/workflows/release.yml`
+
+The release template is the alt branch's file with four lines changed: name,
+trigger, concurrency group, and the moving Docker tag. Keeping the rest identical
+is what makes the two implementations' artefacts comparable.
+
 ## Sanitisation checklist
 
-Run before the first push and before any release.
+Run before the first push and before any release. The pre-push hook checks most
+of this automatically.
 
 - No credentials in tracked files or in history. Scan for `ghp_`, `github_pat_`,
   `dckr_pat_`, `AKIA`, `BEGIN … PRIVATE KEY`, and any bearer token shapes.
@@ -134,24 +174,30 @@ Hand this to whoever maintains the `main` branch build.
 >    Do not touch the `alt` branch, and do not force-push anything you did not
 >    create.
 >
-> 3. **Add a release workflow** at `.github/workflows/release.yml` on your branch,
->    matching the alt branch's file but with these differences:
+> 3. **Copy the two workflow templates** from the `alt` branch. They already carry
+>    the correct trigger scope, tag scheme, and Docker tags:
 >
->    - `name: Release`
->    - `on.push.branches: [main]` and `on.push.tags: ['v*-beta']`
->    - `concurrency.group: release-main-${{ github.ref }}`
->    - metadata tags: `type=raw,value=beta` and `type=semver,pattern={{version}}`
->    - `flavor: latest=false` — do **not** publish `latest`
+>    ```bash
+>    git show alt:docs/templates/main-ci.yml      > .github/workflows/ci.yml
+>    git show alt:docs/templates/main-release.yml > .github/workflows/release.yml
+>    ```
 >
->    The alt branch's file is the reference implementation; copy it and change
->    only those lines. Two details in it are load-bearing and easy to get wrong:
->    the `secrets` context is **not** available in a step-level `if`, so capture
->    secret presence in a job-level `env` value and test that instead; and scan the
->    published image **by digest**, not by tag, so you are provably scanning what
->    you just pushed rather than whatever a shared tag now points at.
+>    Adjust the CI job bodies to your toolchain; leave the release workflow alone
+>    apart from anything genuinely specific to your build. Two details in it are
+>    load-bearing and easy to get wrong: the `secrets` context is **not** available
+>    in a step-level `if`, so secret presence is captured in a job-level `env`
+>    value; and the published image is scanned **by digest**, not by tag, so the
+>    scan provably covers what was just pushed rather than whatever a shared tag
+>    points at by then.
 >
-> 4. **Scope your CI workflow** to `branches: [main]` so it does not run on the
->    alt branch's pushes.
+> 4. **Enable the pre-push hook** so a sanitisation failure is caught before it
+>    reaches a public remote:
+>
+>    ```bash
+>    git show alt:.githooks/pre-push > .githooks/pre-push
+>    chmod +x .githooks/pre-push
+>    git config core.hooksPath .githooks
+>    ```
 >
 > 5. **Confirm the Docker Hub secrets exist** on the repository or organization:
 >    `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN`. The token should be a Docker Hub

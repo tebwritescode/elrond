@@ -1,0 +1,153 @@
+#!/bin/sh
+#
+# Sanitisation gate for Elrond.
+#
+# Runs before every `git push`. Two tiers:
+#
+#   * Credentials, private keys, and personal identity are blocked on every
+#     remote. There is no remote where those belong.
+#   * Internal infrastructure addresses are blocked only when pushing to a public
+#     host. They are perfectly fine on the self-hosted Gitea and would be a
+#     topology leak on GitHub.
+#
+# Installed via `git config core.hooksPath .githooks`, so it is version
+# controlled and applies to everyone who clones, rather than living in .git/hooks
+# where it would exist only on one machine.
+#
+# `git push --no-verify` bypasses this deliberately. If you need that, you almost
+# certainly want to fix the finding instead.
+
+set -eu
+
+remote_name="${1:-}"
+remote_url="${2:-}"
+
+red=''
+bold=''
+reset=''
+if [ -t 2 ]; then
+    red='\033[31m'
+    bold='\033[1m'
+    reset='\033[0m'
+fi
+
+fail() {
+    printf "${red}${bold}pre-push blocked:${reset} %s\n" "$1" >&2
+}
+
+# Is this a public host? Anything that is not the internal Gitea is treated as
+# public, so a new public remote is guarded by default rather than by being
+# remembered.
+is_public=0
+case "$remote_url" in
+    *github.com*) is_public=1 ;;
+    *10.0.0.0*) is_public=0 ;;
+    *) is_public=1 ;;
+esac
+
+# Collect the commits actually being pushed. When a ref is new, the remote sha is
+# all zeroes and there is no range, so the whole ref is scanned.
+ranges=''
+while read -r _local_ref local_sha _remote_ref remote_sha; do
+    # A deletion has an all-zero local sha; there is nothing to inspect.
+    case "$local_sha" in
+        *[!0]*) ;;
+        *) continue ;;
+    esac
+
+    case "$remote_sha" in
+        *[!0]*) ranges="$ranges $remote_sha..$local_sha" ;;
+        *) ranges="$ranges $local_sha" ;;
+    esac
+done
+
+# Nothing to push.
+[ -n "$ranges" ] || exit 0
+
+status=0
+
+# The detector must not scan itself. This file necessarily contains the literal
+# strings it searches for, and the documentation quotes the token prefixes, so
+# without these exclusions the hook blocks its own commit. Excluded by exact path,
+# not by a broad glob, so a real secret hidden anywhere else still trips it.
+self='
+:(exclude).githooks/pre-push
+:(exclude)docs/publishing.md
+'
+
+# --------------------------------------------------------------- always blocked
+#
+# Token shapes and key headers, searched across every blob in the pushed commits
+# rather than only the final tree: a credential that was committed and later
+# removed is still published.
+secret_pattern='ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|dckr_pat_[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----|xox[baprs]-[A-Za-z0-9-]{10,}'
+
+# shellcheck disable=SC2086
+if git log --no-color -p -E -G "$secret_pattern" $ranges -- . $self 2>/dev/null \
+    | grep -Eq "$secret_pattern"; then
+    fail "a credential or private key appears in the commits being pushed."
+    printf '  Find it with:\n    git log -p -E -G %s\n' "'$secret_pattern'" >&2
+    status=1
+fi
+
+identity_pattern='@gmail\.com'
+# shellcheck disable=SC2086
+if git log --no-color -p -E -G "$identity_pattern" $ranges -- . $self 2>/dev/null \
+    | grep -Eq "$identity_pattern"; then
+    fail "a personal email address appears in the commits being pushed."
+    printf '  Commits should be authored under the public account name with a noreply address.\n' >&2
+    status=1
+fi
+
+# Author identity is checked separately from file content, because an email in a
+# commit header never appears in a diff.
+# shellcheck disable=SC2086
+if git log --no-color --format='%an <%ae>%n%cn <%ce>' $ranges 2>/dev/null \
+    | grep -Eq "$identity_pattern"; then
+    fail "a commit in this push is authored under a personal email address."
+    status=1
+fi
+
+# ------------------------------------------------- blocked on public remotes only
+if [ "$is_public" -eq 1 ]; then
+    internal_pattern='10\.94\.18\.85|100\.107\.54\.40|100\.80\.62\.101|internal\.example|internal-host'
+
+    # Only the tree being published is checked here, not the whole history. The
+    # convention is that GitHub receives a sanitised snapshot; blocking on history
+    # that was deliberately left behind would make every push fail.
+    for range in $ranges; do
+        tip="${range##*..}"
+        # shellcheck disable=SC2086
+        if git grep --no-color -I -E -q "$internal_pattern" "$tip" -- . $self 2>/dev/null; then
+            fail "an internal address or hostname is present in the tree being pushed to a public remote."
+            printf '  Offending lines:\n' >&2
+            # shellcheck disable=SC2086
+            git grep --no-color -I -n -E "$internal_pattern" "$tip" -- . $self 2>/dev/null \
+                | sed 's/^/    /' >&2
+            status=1
+            break
+        fi
+    done
+
+    # Files that must never reach a public remote even if someone force-adds them.
+    for range in $ranges; do
+        tip="${range##*..}"
+        tracked=$(git ls-tree -r --name-only "$tip" 2>/dev/null | grep -E '^(\.env$|dev-data/|data/|.*\.db$|.*\.pem$|.*\.key$)' || true)
+        if [ -n "$tracked" ]; then
+            fail "runtime state or a secret file is tracked in the tree being pushed."
+            printf '%s\n' "$tracked" | sed 's/^/    /' >&2
+            status=1
+            break
+        fi
+    done
+fi
+
+if [ "$status" -ne 0 ]; then
+    printf '\n  Remote: %s (%s), treated as %s.\n' \
+        "$remote_name" "$remote_url" \
+        "$([ "$is_public" -eq 1 ] && echo public || echo internal)" >&2
+    printf '  See docs/publishing.md for the sanitisation checklist.\n' >&2
+    exit 1
+fi
+
+exit 0

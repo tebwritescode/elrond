@@ -1,0 +1,87 @@
+# TEMPLATE for the PRIMARY implementation.
+#
+# This file is not active where it sits. Copy it to `.github/workflows/ci.yml`
+# on the `main` branch of github.com/tebwritescode/elrond. It lives on the `alt`
+# branch only because that branch holds the shared coordination documents; see
+# docs/publishing.md.
+#
+# Adjust the build steps to match the primary implementation's toolchain. The
+# parts that matter for coordination are the trigger scope and the workflow name.
+
+name: CI
+
+on:
+  push:
+    # Scoped to the primary implementation's branch. A workflow only runs for
+    # events on the branch it lives on, and keeping this narrow is what stops the
+    # two implementations' pipelines from running against each other's code.
+    branches: [main]
+    tags: ['v*-beta']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# Cancel superseded runs on the same ref; only the newest result matters.
+concurrency:
+  group: ci-main-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Replace the body of these jobs with whatever the primary implementation
+  # actually needs. The shapes below are what the alt build uses.
+  # ---------------------------------------------------------------------------
+
+  build:
+    name: Build and test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Example, for a Rust workspace:
+      # - run: cargo fmt --all -- --check
+      # - run: cargo clippy --workspace --all-targets -- -D warnings
+      # - run: cargo test --workspace --locked
+      #
+      # Example, for a Node project:
+      # - uses: actions/setup-node@v4
+      #   with: { node-version: '24', cache: npm }
+      # - run: npm ci
+      # - run: npm run lint && npm run typecheck && npm test
+      - name: Placeholder
+        run: echo "Replace with the primary implementation's quality gates."
+
+  image:
+    name: Container image
+    runs-on: ubuntu-latest
+    needs: [build]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      # Built on every run so a broken Dockerfile is caught in the pull request,
+      # but not pushed: publishing is the release workflow's job.
+      - name: Build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: elrond:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: The image starts and reports healthy
+        run: |
+          docker run -d --name elrond-ci -p 3000:3000 elrond:ci
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:3000/api/v1/health; then
+              echo "healthy"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "the container never became healthy" >&2
+          docker logs elrond-ci
+          exit 1
