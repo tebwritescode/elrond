@@ -17,15 +17,16 @@ versions, and publishing reproducible professional binders.
 
 ## Status
 
-`v0.1.0` is released. `v0.2.0` is in progress: ingestion, categories, tags, and
-search work end to end; the browser PDF viewer and ZIP import are still to come.
+`v0.2.0` is the current release: immutable uploads, categories, tags, search, and
+native printable binder generation work end to end. Browser PDF viewing, ZIP
+import, review workflows, and advanced binder editing remain future work.
 
 | Milestone | Scope | State |
 | --- | --- | --- |
 | `v0.1.0` | Architecture, design system, authentication, deployment | **released** |
-| `v0.2.0` | Ingestion, categories, tags, search, viewing | **in progress** |
-| `v0.3.0` | Versions, review workflow, annotations, dashboard | planned |
-| `v0.4.0` | Binder designer and reproducible PDF generation | planned |
+| `v0.2.0` | Ingestion, categories, tags, search, basic binder generation | **released** |
+| `v0.3.0` | Viewing, ZIP import, versions, review workflow | planned |
+| `v0.4.0` | Advanced binder designer and release history | planned |
 | `v0.5.0` | Audit, import/export, backup, restore | planned |
 | `v0.9.0` | Security, accessibility, migration, performance hardening | planned |
 | `v1.0.0` | Complete supported release | planned |
