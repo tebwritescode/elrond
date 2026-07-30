@@ -90,7 +90,7 @@ jobs:
           provenance: mode=max
 
       - name: Scan the published image
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           # By digest, not by tag: this provably scans what was just pushed rather
           # than whatever the shared tag points at by the time the scan runs.
