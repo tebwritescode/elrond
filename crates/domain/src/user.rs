@@ -361,7 +361,9 @@ mod tests {
         assert!(DisplayName::parse("   ").is_err());
         assert!(DisplayName::parse("Records\u{0007}Team").is_err());
         assert_eq!(
-            DisplayName::parse("  Records Team  ").expect("valid").as_str(),
+            DisplayName::parse("  Records Team  ")
+                .expect("valid")
+                .as_str(),
             "Records Team"
         );
     }

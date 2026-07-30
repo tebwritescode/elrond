@@ -4,7 +4,9 @@ use std::path::Path;
 use std::str::FromStr;
 use std::time::Duration;
 
-use sqlx::sqlite::{SqliteAutoVacuum, SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
+use sqlx::sqlite::{
+    SqliteAutoVacuum, SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous,
+};
 use sqlx::{Pool, Sqlite};
 use thiserror::Error;
 
@@ -13,6 +15,25 @@ use thiserror::Error;
 /// Compiling them in means the shipped image cannot drift from the schema it was
 /// built against, and no migration CLI is needed at runtime.
 static MIGRATIONS: sqlx::migrate::Migrator = sqlx::migrate!("../../migrations");
+
+/// Turns a driver error into the closest port-level error.
+///
+/// Shared by every repository so a uniqueness conflict is reported as a
+/// conflict — and therefore as HTTP 409 — rather than as an opaque 500.
+pub(crate) fn classify(
+    error: sqlx::Error,
+    resource: &'static str,
+    field: &'static str,
+) -> elrond_application::ports::RepositoryError {
+    use elrond_application::ports::RepositoryError;
+
+    if let sqlx::Error::Database(ref database_error) = error
+        && database_error.is_unique_violation()
+    {
+        return RepositoryError::UniqueViolation { resource, field };
+    }
+    RepositoryError::backend(error)
+}
 
 /// A database setup or migration failure.
 #[derive(Debug, Error)]
@@ -212,7 +233,9 @@ mod tests {
         let db = Database::connect_in_memory().await.expect("connects");
         // Running the migrator a second time must be a no-op, which is what makes
         // a container restart safe.
-        db.migrate().await.expect("re-running migrations is a no-op");
+        db.migrate()
+            .await
+            .expect("re-running migrations is a no-op");
     }
 
     #[tokio::test]
@@ -231,7 +254,9 @@ mod tests {
             .await;
         assert!(update.is_err(), "audit history must not be rewritable");
 
-        let delete = sqlx::query("DELETE FROM audit_events").execute(db.pool()).await;
+        let delete = sqlx::query("DELETE FROM audit_events")
+            .execute(db.pool())
+            .await;
         assert!(delete.is_err(), "audit history must not be erasable");
     }
 
@@ -264,7 +289,10 @@ mod tests {
             .fetch_one(db.pool())
             .await
             .expect("query succeeds");
-        assert_eq!(sessions, 0, "foreign key cascade should have removed the session");
+        assert_eq!(
+            sessions, 0,
+            "foreign key cascade should have removed the session"
+        );
     }
 
     #[tokio::test]
@@ -277,6 +305,9 @@ mod tests {
         )
         .execute(db.pool())
         .await;
-        assert!(result.is_err(), "the CHECK constraint should mirror the Rust enum");
+        assert!(
+            result.is_err(),
+            "the CHECK constraint should mirror the Rust enum"
+        );
     }
 }

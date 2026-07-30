@@ -15,7 +15,7 @@ pub use checksum::Sha256Checksum;
 pub use document::{LifecycleState, LifecycleTransitionError};
 pub use error::DomainError;
 pub use id::{CategoryId, DocumentId, DocumentVersionId, SessionId, UserId};
-pub use user::{EmailAddress, DisplayName, PasswordPolicy, Role, User};
+pub use user::{DisplayName, EmailAddress, PasswordPolicy, Role, User};
 
 /// Result alias for fallible domain operations.
 pub type DomainResult<T> = Result<T, DomainError>;

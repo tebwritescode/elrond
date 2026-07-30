@@ -239,11 +239,7 @@ pub trait SessionRepository: Send + Sync + 'static {
     ) -> Result<Option<SessionRecord>, RepositoryError>;
 
     /// Records activity and extends the idle window.
-    async fn touch(
-        &self,
-        id: SessionId,
-        seen_at: OffsetDateTime,
-    ) -> Result<(), RepositoryError>;
+    async fn touch(&self, id: SessionId, seen_at: OffsetDateTime) -> Result<(), RepositoryError>;
 
     /// Revokes one session.
     async fn delete(&self, id: SessionId) -> Result<(), RepositoryError>;

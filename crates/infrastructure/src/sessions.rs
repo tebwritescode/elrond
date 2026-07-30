@@ -10,7 +10,7 @@ use sqlx::{Pool, Row, Sqlite};
 use time::OffsetDateTime;
 use uuid::Uuid;
 
-use crate::db::Database;
+use crate::db::{Database, classify};
 
 /// Sessions stored in SQLite.
 #[derive(Debug, Clone)]
@@ -41,17 +41,7 @@ impl SessionRepository for SqliteSessionRepository {
         .bind(session.expires_at)
         .execute(&self.pool)
         .await
-        .map_err(|error| {
-            if let sqlx::Error::Database(ref database_error) = error {
-                if database_error.is_unique_violation() {
-                    return RepositoryError::UniqueViolation {
-                        resource: "session",
-                        field: "token",
-                    };
-                }
-            }
-            RepositoryError::backend(error)
-        })?;
+        .map_err(|error| classify(error, "session", "token"))?;
         Ok(())
     }
 
@@ -115,11 +105,15 @@ impl SessionRepository for SqliteSessionRepository {
 fn map_session(row: &SqliteRow) -> Result<SessionRecord, RepositoryError> {
     let id: Uuid = row.try_get("id").map_err(RepositoryError::backend)?;
     let user_id: Uuid = row.try_get("user_id").map_err(RepositoryError::backend)?;
-    let created_at: OffsetDateTime = row.try_get("created_at").map_err(RepositoryError::backend)?;
+    let created_at: OffsetDateTime = row
+        .try_get("created_at")
+        .map_err(RepositoryError::backend)?;
     let last_seen_at: OffsetDateTime = row
         .try_get("last_seen_at")
         .map_err(RepositoryError::backend)?;
-    let expires_at: OffsetDateTime = row.try_get("expires_at").map_err(RepositoryError::backend)?;
+    let expires_at: OffsetDateTime = row
+        .try_get("expires_at")
+        .map_err(RepositoryError::backend)?;
 
     Ok(SessionRecord {
         id: SessionId::from_uuid(id),

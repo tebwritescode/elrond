@@ -1,7 +1,9 @@
 //! Credential hashing and session token generation.
 
 use argon2::password_hash::rand_core::{OsRng, RngCore};
-use argon2::password_hash::{PasswordHash as PhcHash, PasswordHasher as _, PasswordVerifier, SaltString};
+use argon2::password_hash::{
+    PasswordHash as PhcHash, PasswordHasher as _, PasswordVerifier, SaltString,
+};
 use argon2::{Algorithm, Argon2, Params, Version};
 use async_trait::async_trait;
 use elrond_application::ports::{
@@ -30,15 +32,10 @@ impl Argon2idHasher {
 
     /// Builds a hasher with Elrond's parameters.
     pub fn new() -> Self {
-        let params = Params::new(
-            Self::MEMORY_KIB,
-            Self::ITERATIONS,
-            Self::PARALLELISM,
-            None,
-        )
-        // The constants above are compile-time known and within Argon2's valid
-        // ranges, so this cannot fail.
-        .expect("Elrond's Argon2 parameters are valid");
+        let params = Params::new(Self::MEMORY_KIB, Self::ITERATIONS, Self::PARALLELISM, None)
+            // The constants above are compile-time known and within Argon2's valid
+            // ranges, so this cannot fail.
+            .expect("Elrond's Argon2 parameters are valid");
         Self { params }
     }
 
@@ -170,8 +167,14 @@ mod tests {
     #[tokio::test]
     async fn the_same_password_hashes_differently_every_time() {
         let hasher = Argon2idHasher::new();
-        let first = hasher.hash("same password here".to_owned()).await.expect("ok");
-        let second = hasher.hash("same password here".to_owned()).await.expect("ok");
+        let first = hasher
+            .hash("same password here".to_owned())
+            .await
+            .expect("ok");
+        let second = hasher
+            .hash("same password here".to_owned())
+            .await
+            .expect("ok");
         assert_ne!(
             first.expose(),
             second.expose(),
@@ -182,7 +185,10 @@ mod tests {
     #[tokio::test]
     async fn the_stored_hash_advertises_argon2id() {
         let hasher = Argon2idHasher::new();
-        let hash = hasher.hash("some long password".to_owned()).await.expect("ok");
+        let hash = hasher
+            .hash("some long password".to_owned())
+            .await
+            .expect("ok");
         let phc = hash.expose();
         assert!(phc.starts_with("$argon2id$"), "unexpected format: {phc}");
         assert!(phc.contains(&format!("m={}", Argon2idHasher::MEMORY_KIB)));
@@ -194,7 +200,10 @@ mod tests {
     async fn a_malformed_stored_hash_is_reported_distinctly() {
         let hasher = Argon2idHasher::new();
         let error = hasher
-            .verify("any password at all".to_owned(), PasswordHash::new("garbage".to_owned()))
+            .verify(
+                "any password at all".to_owned(),
+                PasswordHash::new("garbage".to_owned()),
+            )
             .await
             .expect_err("malformed hashes are errors, not mismatches");
         assert!(matches!(error, HashingError::MalformedHash));

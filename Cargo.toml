@@ -18,6 +18,7 @@ elrond-api = { path = "crates/api" }
 
 anyhow = "1.0"
 argon2 = { version = "0.5", features = ["std"] }
+dotenvy = "0.15"
 async-trait = "0.1"
 axum = { version = "0.8", features = ["macros", "multipart"] }
 axum-extra = { version = "0.10", features = ["cookie"] }
@@ -43,7 +44,8 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "fs"
 tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.6", features = ["trace", "fs", "set-header", "limit", "compression-gzip"] }
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+# The `time` feature supplies the UTC RFC 3339 log timestamps.
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "time"] }
 uuid = { version = "1", features = ["v7", "serde"] }
 
 [workspace.lints.rust]
@@ -52,7 +54,15 @@ unsafe_code = "forbid"
 [workspace.lints.clippy]
 all = { level = "deny", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
+# The docs in this workspace are written as prose and name real products
+# (Axum, SQLite, PostgreSQL, Stirling-PDF). Backticking those would misrepresent
+# them as code identifiers.
+doc_markdown = "allow"
+# `users::UserRepository` reads better than `users::Repository` at call sites.
 module_name_repetitions = "allow"
+# Errors and panics are documented where the reason is non-obvious rather than
+# uniformly, and the `# Errors` section boilerplate adds no information when the
+# error type is already explicit.
 missing_errors_doc = "allow"
 missing_panics_doc = "allow"
 must_use_candidate = "allow"

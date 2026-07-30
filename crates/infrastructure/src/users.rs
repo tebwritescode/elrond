@@ -10,7 +10,7 @@ use sqlx::{Pool, Row, Sqlite};
 use time::OffsetDateTime;
 use uuid::Uuid;
 
-use crate::db::Database;
+use crate::db::{Database, classify};
 
 /// Columns selected whenever a full account is read, kept in one place so every
 /// query and the row mapper cannot drift apart.
@@ -39,19 +39,22 @@ impl UserRepository for SqliteUserRepository {
             .fetch_one(&self.pool)
             .await
             .map_err(RepositoryError::backend)?;
-        // COUNT(*) is never negative, so the cast cannot wrap.
-        Ok(count.max(0) as u64)
+        // COUNT(*) is never negative, so clamping then reinterpreting the sign is
+        // exact rather than lossy.
+        Ok(count.max(0).cast_unsigned())
     }
 
     async fn find_credentialed_by_email(
         &self,
         email: &EmailAddress,
     ) -> Result<Option<Credentialed>, RepositoryError> {
-        let row = sqlx::query(&format!("SELECT {USER_COLUMNS} FROM users WHERE email = ?1"))
-            .bind(email.as_str())
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(RepositoryError::backend)?;
+        let row = sqlx::query(&format!(
+            "SELECT {USER_COLUMNS} FROM users WHERE email = ?1"
+        ))
+        .bind(email.as_str())
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(RepositoryError::backend)?;
 
         row.as_ref().map(map_credentialed).transpose()
     }
@@ -131,8 +134,12 @@ fn map_credentialed(row: &SqliteRow) -> Result<Credentialed, RepositoryError> {
         .map_err(RepositoryError::backend)?;
     let role: String = row.try_get("role").map_err(RepositoryError::backend)?;
     let is_active: bool = row.try_get("is_active").map_err(RepositoryError::backend)?;
-    let created_at: OffsetDateTime = row.try_get("created_at").map_err(RepositoryError::backend)?;
-    let updated_at: OffsetDateTime = row.try_get("updated_at").map_err(RepositoryError::backend)?;
+    let created_at: OffsetDateTime = row
+        .try_get("created_at")
+        .map_err(RepositoryError::backend)?;
+    let updated_at: OffsetDateTime = row
+        .try_get("updated_at")
+        .map_err(RepositoryError::backend)?;
     let password_hash: String = row
         .try_get("password_hash")
         .map_err(RepositoryError::backend)?;
@@ -171,16 +178,6 @@ fn map_credentialed(row: &SqliteRow) -> Result<Credentialed, RepositoryError> {
         },
         password_hash: PasswordHash::new(password_hash),
     })
-}
-
-/// Turns a driver error into the closest port-level error.
-fn classify(error: sqlx::Error, resource: &'static str, field: &'static str) -> RepositoryError {
-    if let sqlx::Error::Database(ref database_error) = error {
-        if database_error.is_unique_violation() {
-            return RepositoryError::UniqueViolation { resource, field };
-        }
-    }
-    RepositoryError::backend(error)
 }
 
 #[cfg(test)]

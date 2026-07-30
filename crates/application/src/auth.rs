@@ -226,6 +226,14 @@ impl AuthService {
         })
     }
 
+    /// Lists every account, oldest first.
+    ///
+    /// Authorization is the caller's responsibility; the HTTP layer gates this
+    /// behind the admin role.
+    pub async fn list_users(&self) -> ApplicationResult<Vec<User>> {
+        Ok(self.users.list().await?)
+    }
+
     /// Revokes a single session. Idempotent.
     pub async fn sign_out(&self, session_id: SessionId) -> ApplicationResult<()> {
         self.sessions.delete(session_id).await?;

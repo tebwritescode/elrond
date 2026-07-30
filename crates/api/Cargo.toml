@@ -1,0 +1,33 @@
+[package]
+name = "elrond-api"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Elrond HTTP contracts: Axum routing, authentication, CSRF, and static asset delivery."
+
+[dependencies]
+elrond-application.workspace = true
+elrond-domain.workspace = true
+
+axum.workspace = true
+axum-extra.workspace = true
+http.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+time.workspace = true
+tokio.workspace = true
+tower.workspace = true
+tower-http.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+elrond-application = { workspace = true, features = ["testing"] }
+elrond-infrastructure.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+tower = { workspace = true, features = ["util"] }
+
+[lints]
+workspace = true

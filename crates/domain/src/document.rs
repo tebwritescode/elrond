@@ -81,7 +81,10 @@ impl LifecycleState {
         if self.can_transition_to(next) {
             Ok(next)
         } else {
-            Err(LifecycleTransitionError { from: self, to: next })
+            Err(LifecycleTransitionError {
+                from: self,
+                to: next,
+            })
         }
     }
 
