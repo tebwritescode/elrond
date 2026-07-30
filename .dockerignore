@@ -1,0 +1,15 @@
+.git
+.github
+.env
+.env.*
+!.env.example
+data
+backups
+target
+web/node_modules
+web/dist
+*.db
+*.db-shm
+*.db-wal
+*.log
+docs

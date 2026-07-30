@@ -142,6 +142,7 @@ export function ZipImportDialog({ open, onClose, onImported }: ZipImportDialogPr
             <label className="form-field import-root-field">
               <span>Category for files at the ZIP root</span>
               <input
+                aria-label="Category for files at the ZIP root"
                 maxLength={120}
                 onChange={(event) => setRootCategory(event.target.value)}
                 required

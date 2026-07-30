@@ -28,6 +28,23 @@ to `http://127.0.0.1:3000`.
 Local databases, uploads, generated documents, secrets, and backups are excluded
 from version control.
 
+## Docker
+
+Build and run Elrond locally with Compose:
+
+```text
+docker compose up --build
+```
+
+The application listens on `http://localhost:3000` and stores its SQLite
+database, immutable originals, derivatives, and generated binders in the
+`elrond-data` volume. Set `ELROND_SECURE_COOKIES=true` when the application is
+served through HTTPS.
+
+Docker Hub publication is handled by GitHub Actions. The repository must define
+`DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` secrets. Pushes to `main` publish the
+`edge` tag; semantic-version tags publish version aliases and `latest`.
+
 ## License
 
 Elrond is available under the MIT License.
