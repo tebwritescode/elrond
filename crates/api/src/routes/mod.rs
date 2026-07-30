@@ -1,5 +1,6 @@
 //! Router assembly and cross-cutting middleware.
 
+pub mod binders;
 pub mod categories;
 pub mod documents;
 pub mod health;
@@ -47,6 +48,7 @@ pub fn router(state: AppState) -> Router {
             patch(categories::update).delete(categories::delete),
         )
         .route("/tags", get(documents::list_tags))
+        .route("/binders/build", post(binders::build))
         .route("/documents", get(documents::list).post(documents::upload))
         .route(
             "/documents/{id}",

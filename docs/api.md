@@ -65,7 +65,7 @@ becomes invalid once the privilege level changes.
 Unauthenticated. Used by container orchestration.
 
 ```json
-{ "status": "ok", "version": "0.2.1" }
+{ "status": "ok", "version": "0.2.2" }
 ```
 
 ### `GET /bootstrap`
@@ -85,7 +85,7 @@ tab's in-flight forms.
     "created_at": "2026-07-30T00:45:03.143Z"
   },
   "csrf_token": "…",
-  "version": "0.2.1"
+  "version": "0.2.2"
 }
 ```
 

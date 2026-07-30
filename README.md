@@ -17,7 +17,7 @@ versions, and publishing reproducible professional binders.
 
 ## Status
 
-`v0.2.1` is the current release: immutable uploads, categories, tags, search, and
+`v0.2.2` is the current release: immutable uploads, categories, tags, search, and
 native printable binder generation work end to end. Browser PDF viewing, ZIP
 import, review workflows, and advanced binder editing remain future work.
 

@@ -47,8 +47,22 @@ esac
 
 # Collect the commits actually being pushed. When a ref is new, the remote sha is
 # all zeroes and there is no range, so the whole ref is scanned.
+#
+# The destination ref is also checked here. Two independent Elrond implementations
+# share one GitHub repository on separate branches, and this checkout owns `alt`
+# only. Writing to `main` from here would clobber the other implementation's work,
+# so it is refused structurally rather than left to care. See docs/publishing.md.
 ranges=''
-while read -r _local_ref local_sha _remote_ref remote_sha; do
+lane_violation=''
+while read -r _local_ref local_sha remote_ref remote_sha; do
+    if [ "$is_public" -eq 1 ]; then
+        case "$remote_ref" in
+            refs/heads/alt|refs/tags/v*-alt.beta) ;;
+            '') ;;
+            *) lane_violation="$lane_violation $remote_ref" ;;
+        esac
+    fi
+
     # A deletion has an all-zero local sha; there is nothing to inspect.
     case "$local_sha" in
         *[!0]*) ;;
@@ -60,6 +74,14 @@ while read -r _local_ref local_sha _remote_ref remote_sha; do
         *) ranges="$ranges $local_sha" ;;
     esac
 done
+
+if [ -n "$lane_violation" ]; then
+    fail "this checkout may only publish the 'alt' branch and 'v*-alt.beta' tags."
+    printf '  Refused destination ref(s):%s\n' "$lane_violation" >&2
+    printf '  The primary implementation owns main; pushing it from here would\n' >&2
+    printf '  overwrite its work. See docs/publishing.md.\n' >&2
+    exit 1
+fi
 
 # Nothing to push.
 [ -n "$ranges" ] || exit 0

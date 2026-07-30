@@ -26,6 +26,10 @@ pub enum ApplicationError {
     #[error(transparent)]
     Storage(#[from] crate::ports::BlobError),
 
+    /// Binder rendering failed.
+    #[error(transparent)]
+    Render(#[from] crate::ports::RenderError),
+
     /// Password hashing or verification failed for a reason unrelated to the
     /// supplied password being wrong.
     #[error(transparent)]
@@ -90,6 +94,12 @@ impl ApplicationError {
                 "content_integrity_failure"
             }
             Self::Storage(crate::ports::BlobError::TooLarge { .. }) => "content_too_large",
+            Self::Render(crate::ports::RenderError::UnreadableSource { .. }) => {
+                "binder_source_unreadable"
+            }
+            Self::Render(crate::ports::RenderError::EmptySource { .. }) => "binder_source_empty",
+            Self::Render(crate::ports::RenderError::EmptyPlan) => "binder_empty",
+            Self::Render(crate::ports::RenderError::Backend(_)) => "binder_render_failure",
             Self::Hashing(_) => "credential_processing_failure",
             Self::InvalidCredentials => "invalid_credentials",
             Self::AccountDisabled => "account_disabled",
@@ -123,6 +133,7 @@ impl ApplicationError {
                         | crate::ports::BlobError::IntegrityFailure { .. }
                         | crate::ports::BlobError::NotFound { .. }
                 )
+                | Self::Render(crate::ports::RenderError::Backend(_))
         )
     }
 }

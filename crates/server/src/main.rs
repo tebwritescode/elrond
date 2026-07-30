@@ -14,12 +14,14 @@ use anyhow::{Context, Result};
 use elrond_api::state::AppServices;
 use elrond_api::{AppState, router};
 use elrond_application::auth::AuthService;
+use elrond_application::binders::BinderService;
 use elrond_application::categories::CategoryService;
 use elrond_application::documents::DocumentService;
 use elrond_infrastructure::{
     Argon2idHasher, Database, DatabaseSettings, FilesystemBlobStore, MagicByteInspector,
-    RandomSessionTokens, SqliteCategoryRepository, SqliteDocumentRepository, SqliteSearchIndex,
-    SqliteSessionRepository, SqliteTagRepository, SqliteUserRepository, SystemClock,
+    NativeBinderRenderer, RandomSessionTokens, SqliteCategoryRepository, SqliteDocumentRepository,
+    SqliteSearchIndex, SqliteSessionRepository, SqliteTagRepository, SqliteUserRepository,
+    SystemClock,
 };
 use settings::Settings;
 use tokio::signal;
@@ -53,6 +55,7 @@ async fn main() -> Result<()> {
     let users = Arc::new(SqliteUserRepository::new(&database));
     let sessions = Arc::new(SqliteSessionRepository::new(&database));
     let categories_repo = Arc::new(SqliteCategoryRepository::new(&database));
+    let categories_repo_for_binders = categories_repo.clone();
     let documents_repo = Arc::new(SqliteDocumentRepository::new(&database));
     let tags_repo = Arc::new(SqliteTagRepository::new(&database));
     let search = Arc::new(SqliteSearchIndex::new(&database));
@@ -75,6 +78,13 @@ async fn main() -> Result<()> {
     );
 
     let categories = CategoryService::new(categories_repo, documents_repo.clone(), clock.clone());
+    let binders = BinderService::new(
+        categories_repo_for_binders,
+        documents_repo.clone(),
+        blobs.clone(),
+        Arc::new(NativeBinderRenderer),
+        clock.clone(),
+    );
     let documents = DocumentService::new(
         documents_repo,
         tags_repo.clone(),
@@ -89,6 +99,7 @@ async fn main() -> Result<()> {
         AppServices {
             auth: auth.clone(),
             categories,
+            binders,
             documents,
             tags: tags_repo,
             tokens,

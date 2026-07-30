@@ -799,3 +799,46 @@
   border: 1px solid var(--el-rule-strong);
   color: var(--el-ink);
 }
+
+/* ------------------------------------------------------------ Binder builder */
+
+.el-binder-layout {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--el-space-5);
+  align-items: start;
+}
+
+@media (width <= 60rem) {
+  .el-binder-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+.el-checkbox {
+  display: flex;
+  align-items: baseline;
+  gap: var(--el-space-2);
+  min-height: var(--el-target-min);
+  padding: var(--el-space-1) var(--el-space-2);
+  border-radius: var(--el-radius-sm);
+  font-size: var(--el-text-sm);
+  cursor: pointer;
+}
+
+.el-checkbox:hover {
+  background: var(--el-paper-sunken);
+}
+
+/* Large enough to hit comfortably; the default is well under the WCAG 2.2
+   target-size floor. */
+.el-checkbox input[type='checkbox'] {
+  flex: none;
+  width: 1rem;
+  height: 1rem;
+  accent-color: var(--el-accent);
+}
+
+.el-checkbox .el-tree__count {
+  margin-left: auto;
+}

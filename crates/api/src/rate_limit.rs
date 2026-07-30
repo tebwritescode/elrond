@@ -235,7 +235,7 @@ mod tests {
         assert_eq!(limiter.windows.lock().expect("lock").len(), PRUNE_THRESHOLD);
 
         // One more check after the window has passed should sweep the stale keys.
-        limiter.check_at("10.1.0.1", "sign_in", 5, WINDOW, start + WINDOW);
+        limiter.check_at("192.0.2.1", "sign_in", 5, WINDOW, start + WINDOW);
         assert_eq!(
             limiter.windows.lock().expect("lock").len(),
             1,

@@ -12,7 +12,7 @@ use axum::extract::rejection::JsonRejection;
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use elrond_application::ApplicationError;
-use elrond_application::ports::{BlobError, RepositoryError};
+use elrond_application::ports::{BlobError, RenderError, RepositoryError};
 use serde::Serialize;
 
 /// Result alias for handlers.
@@ -160,16 +160,21 @@ impl ApiError {
 fn application_status(error: &ApplicationError) -> StatusCode {
     match error {
         // The request was well-formed JSON but broke a domain rule, which is
-        // what 422 is for.
-        ApplicationError::Domain(_) => StatusCode::UNPROCESSABLE_ENTITY,
+        // what 422 is for. A source document that cannot be read joins it: the
+        // fault is in the library's content rather than in the request, but the
+        // caller is the one who can act on it.
+        ApplicationError::Domain(_)
+        | ApplicationError::Render(
+            RenderError::UnreadableSource { .. } | RenderError::EmptySource { .. },
+        ) => StatusCode::UNPROCESSABLE_ENTITY,
         ApplicationError::Repository(RepositoryError::UniqueViolation { .. })
         | ApplicationError::SetupAlreadyCompleted
-        | ApplicationError::Conflict { .. } => StatusCode::CONFLICT,
+        | ApplicationError::Conflict { .. }
+        | ApplicationError::Render(RenderError::EmptyPlan) => StatusCode::CONFLICT,
         ApplicationError::Repository(RepositoryError::Backend(_))
         | ApplicationError::Hashing(_)
-        | ApplicationError::Storage(BlobError::Backend(_) | BlobError::IntegrityFailure { .. }) => {
-            StatusCode::INTERNAL_SERVER_ERROR
-        }
+        | ApplicationError::Storage(BlobError::Backend(_) | BlobError::IntegrityFailure { .. })
+        | ApplicationError::Render(RenderError::Backend(_)) => StatusCode::INTERNAL_SERVER_ERROR,
         ApplicationError::Storage(BlobError::TooLarge { .. }) => StatusCode::PAYLOAD_TOO_LARGE,
         ApplicationError::InvalidCredentials | ApplicationError::NotAuthenticated => {
             StatusCode::UNAUTHORIZED

@@ -470,6 +470,72 @@ export const api = {
   },
 };
 
+/** Options for generating a binder. */
+export interface BuildBinderOptions {
+  readonly title: string;
+  readonly subtitle?: string;
+  readonly organization?: string;
+  /** Empty means the whole library. A category always brings its descendants. */
+  readonly category_ids: readonly string[];
+  readonly page_size: 'a4' | 'letter';
+  readonly include_cover: boolean;
+  readonly include_toc: boolean;
+  readonly include_separators: boolean;
+  readonly page_numbers: boolean;
+  readonly duplex_blank_pages: boolean;
+}
+
+/** A generated binder, ready to hand to the browser's download machinery. */
+export interface BuiltBinder {
+  readonly blob: Blob;
+  readonly filename: string;
+  readonly pageCount: number;
+  readonly documentCount: number;
+  /** How many documents were left out for want of a PDF. */
+  readonly skipped: number;
+}
+
+/**
+ * Generates a binder and returns the PDF.
+ *
+ * Fetched rather than submitted as a plain form, because the request needs the
+ * CSRF header and a form post cannot set one. The counts come back as headers so
+ * the body can stay a raw PDF.
+ */
+export async function buildBinder(options: BuildBinderOptions): Promise<BuiltBinder> {
+  const headers = new Headers({ 'Content-Type': 'application/json' });
+  if (csrfToken !== null) {
+    headers.set(CSRF_HEADER, csrfToken);
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE}/binders/build`, {
+      method: 'POST',
+      headers,
+      credentials: 'same-origin',
+      body: JSON.stringify(options),
+    });
+  } catch (cause) {
+    throw new NetworkError(cause);
+  }
+
+  if (!response.ok) {
+    throw new ApiError(response.status, await readErrorBody(response));
+  }
+
+  const disposition = response.headers.get('content-disposition') ?? '';
+  const match = /filename="([^"]+)"/.exec(disposition);
+
+  return {
+    blob: await response.blob(),
+    filename: match?.[1] ?? 'binder.pdf',
+    pageCount: Number(response.headers.get('x-elrond-page-count') ?? '0'),
+    documentCount: Number(response.headers.get('x-elrond-document-count') ?? '0'),
+    skipped: Number(response.headers.get('x-elrond-skipped-count') ?? '0'),
+  };
+}
+
 /** URL that downloads a version's immutable original. */
 export function originalUrl(versionId: string): string {
   return `${API_BASE}/versions/${encodeURIComponent(versionId)}/original`;

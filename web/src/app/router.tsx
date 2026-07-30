@@ -3,7 +3,7 @@ import { createRootRoute, createRoute, createRouter } from '@tanstack/react-rout
 import { AccountsPage } from '@/features/admin/AccountsPage';
 import { DashboardPage } from '@/features/dashboard/DashboardPage';
 import { DocumentsPage } from '@/features/documents/DocumentsPage';
-import { BindersPage } from '@/features/placeholders/ComingSoonPage';
+import { BindersPage } from '@/features/binders/BindersPage';
 import { AppShell } from '@/features/shell/AppShell';
 
 import { NotFoundPage } from './NotFoundPage';

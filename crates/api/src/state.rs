@@ -3,6 +3,7 @@
 use std::sync::Arc;
 
 use elrond_application::auth::AuthService;
+use elrond_application::binders::BinderService;
 use elrond_application::categories::CategoryService;
 use elrond_application::documents::DocumentService;
 use elrond_application::ports::{SessionPolicy, SessionTokens, TagRepository};
@@ -17,6 +18,8 @@ pub struct AppState {
     pub auth: AuthService,
     /// Category tree use cases.
     pub categories: CategoryService,
+    /// Binder generation use cases.
+    pub binders: BinderService,
     /// Document ingestion and retrieval use cases.
     pub documents: DocumentService,
     /// Tag listing.
@@ -48,6 +51,8 @@ pub struct AppServices {
     pub auth: AuthService,
     /// Category tree use cases.
     pub categories: CategoryService,
+    /// Binder generation use cases.
+    pub binders: BinderService,
     /// Document use cases.
     pub documents: DocumentService,
     /// Tag storage.
@@ -62,6 +67,7 @@ impl AppState {
         Self {
             auth: services.auth,
             categories: services.categories,
+            binders: services.binders,
             documents: services.documents,
             tags: services.tags,
             tokens: services.tokens,
