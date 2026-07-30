@@ -7,7 +7,7 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.90"
 license = "MIT"
-repository = "https://github.com/tebwritescode/elrond"
+repository = "https://github.com/tebwritescode/elrond-alt"
 description = "Self-hosted document library for immutable originals, controlled PDF versions, and reproducible professional binders."
 
 [workspace.dependencies]
@@ -28,6 +28,9 @@ http = "1"
 # Identifies file types from magic bytes, so a filename can never decide how a
 # stored file is treated.
 infer = { version = "0.19", default-features = false }
+# Native PDF assembly. Default features pull in three date crates and rayon; only
+# `time` is wanted, and it is already a workspace dependency.
+lopdf = { version = "0.44", default-features = false, features = ["time"] }
 mime_guess = "2"
 rand = "0.9"
 serde = { version = "1", features = ["derive"] }

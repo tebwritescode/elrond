@@ -1,8 +1,13 @@
-# Publishes container images.
+# Publishes container images to Docker Hub.
 #
 # `main` publishes `edge`. A `vX.Y.Z` tag publishes `X.Y.Z`, `X.Y`, and `X`, and
 # `latest` only for a stable release, so a pre-release tag can never become the
 # default anyone pulls.
+#
+# Credentials come from repository or organization secrets and never appear in
+# this file. Only DOCKERHUB_TOKEN is secret; the image name is deliberately not,
+# because a masked image name turns every log line and error message into
+# `***/***` and makes a failed publish impossible to diagnose.
 
 name: Release
 
@@ -16,21 +21,30 @@ concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
+env:
+  # Override with a repository variable if the Docker Hub namespace differs from
+  # the GitHub owner.
+  IMAGE_NAME: ${{ vars.DOCKERHUB_IMAGE || 'tebwritescode/elrond-alt' }}
+
 jobs:
   publish:
     name: Build and publish
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    env:
+      # The `secrets` context is not available in a step-level `if`, so presence is
+      # captured here, where it is available, and tested as a plain env value.
+      HAS_DOCKERHUB_CREDENTIALS: ${{ secrets.DOCKERHUB_TOKEN != '' }}
     steps:
       - uses: actions/checkout@v4
 
+      # Emulation for the arm64 build. Native arm64 runners would be faster, but
+      # this keeps the workflow runnable on the standard hosted pool.
       - uses: docker/setup-qemu-action@v3
 
       - uses: docker/setup-buildx-action@v3
 
-      # Credentials come from repository secrets and are never present in the
-      # repository itself.
       - name: Sign in to Docker Hub
         uses: docker/login-action@v3
         with:
@@ -41,17 +55,17 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ secrets.DOCKERHUB_USERNAME }}/elrond-alt
+          images: ${{ env.IMAGE_NAME }}
           tags: |
             type=edge,branch=main
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
+          # `latest` is attached by the rule below rather than by this action, so a
+          # pre-release tag cannot claim it.
           flavor: |
             latest=false
 
-      # `latest` is attached separately, and only for a tag with no pre-release
-      # suffix.
       - name: Decide whether this is a stable release
         id: stability
         run: |
@@ -62,6 +76,7 @@ jobs:
           fi
 
       - name: Build and push
+        id: build
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -69,18 +84,34 @@ jobs:
           push: true
           tags: |
             ${{ steps.meta.outputs.tags }}
-            ${{ steps.stability.outputs.stable == 'true' && format('{0}/elrond-alt:latest', secrets.DOCKERHUB_USERNAME) || '' }}
+            ${{ steps.stability.outputs.stable == 'true' && format('{0}:latest', env.IMAGE_NAME) || '' }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          # A software bill of materials and build provenance, so what shipped can
+          # be audited after the fact.
           sbom: true
           provenance: mode=max
 
       - name: Scan the published image
         uses: aquasecurity/trivy-action@0.28.0
         with:
-          image-ref: ${{ secrets.DOCKERHUB_USERNAME }}/elrond-alt:${{ github.ref_type == 'tag' && github.ref_name || 'edge' }}
+          image-ref: ${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
           format: table
           severity: HIGH,CRITICAL
+          # Unfixed advisories are reported but do not fail the build: there is no
+          # action to take on them, and a permanently red pipeline gets ignored.
           exit-code: '1'
           ignore-unfixed: true
+
+      - name: Update the Docker Hub description
+        # Only from main, and skipped silently when the credential is absent so a
+        # fork without it does not fail the whole run.
+        if: github.ref == 'refs/heads/main' && env.HAS_DOCKERHUB_CREDENTIALS == 'true'
+        uses: peter-evans/dockerhub-description@v4
+        continue-on-error: true
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          repository: ${{ env.IMAGE_NAME }}
+          readme-filepath: ./README.md

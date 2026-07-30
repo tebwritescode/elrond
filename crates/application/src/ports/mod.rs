@@ -7,9 +7,14 @@
 //! This module holds the shared error types and the authentication ports;
 //! [`blobs`] and [`library`] cover content storage and the document library.
 
+pub mod binders;
 pub mod blobs;
 pub mod library;
 
+pub use binders::{
+    BinderPlan, BinderRenderer, BinderSettings, CoverSpec, PageNumbering, PageSize, PlacedEntry,
+    PlanEntry, RenderError, RenderedBinder,
+};
 pub use blobs::{BlobError, BlobStore, ContentInspector, StoredBlob};
 pub use library::{
     CategoryRepository, DocumentFilter, DocumentPage, DocumentRepository, DocumentSort,

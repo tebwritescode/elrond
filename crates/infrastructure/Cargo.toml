@@ -1,4 +1,4 @@
-﻿[package]
+[package]
 name = "elrond-infrastructure"
 version.workspace = true
 edition.workspace = true
@@ -15,6 +15,7 @@ argon2.workspace = true
 async-trait.workspace = true
 hex.workspace = true
 infer.workspace = true
+lopdf.workspace = true
 sha2.workspace = true
 sqlx.workspace = true
 thiserror.workspace = true
@@ -24,6 +25,7 @@ tracing.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+lopdf.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 
 [lints]
