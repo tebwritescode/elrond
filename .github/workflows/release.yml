@@ -1,30 +1,36 @@
-# Publishes container images to Docker Hub.
+# Publishes this implementation's container image to Docker Hub.
 #
-# `main` publishes `edge`. A `vX.Y.Z` tag publishes `X.Y.Z`, `X.Y`, and `X`, and
-# `latest` only for a stable release, so a pre-release tag can never become the
-# default anyone pulls.
+# Two independent Elrond implementations share one GitHub repository and one
+# Docker Hub image, distinguished only by branch and tag. See docs/publishing.md
+# for the whole convention.
 #
-# Credentials come from repository or organization secrets and never appear in
-# this file. Only DOCKERHUB_TOKEN is secret; the image name is deliberately not,
-# because a masked image name turns every log line and error message into
-# `***/***` and makes a failed publish impossible to diagnose.
+# This file belongs to the `alt` branch and must only ever publish `alt-*` tags.
+# A workflow on a branch only runs for events on that branch, so the two
+# implementations' workflows never contend, provided each keeps its trigger
+# scoped to its own branch.
+#
+# Credentials come from repository or organization secrets and never appear here.
+# Only DOCKERHUB_TOKEN is secret; the image name deliberately is not, because a
+# masked image name renders every log line as ***/*** and makes a failed publish
+# impossible to diagnose.
 
-name: Release
+name: Release (alt)
 
 on:
   push:
-    branches: [main]
-    tags: ['v*']
+    # Scoped to this implementation's branch. Widening this would make the two
+    # builds fight over the same Docker tags.
+    branches: [alt]
+    tags: ['v*-alt.beta']
   workflow_dispatch:
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-alt-${{ github.ref }}
   cancel-in-progress: false
 
 env:
-  # Override with a repository variable if the Docker Hub namespace differs from
-  # the GitHub owner.
-  IMAGE_NAME: ${{ vars.DOCKERHUB_IMAGE || 'tebwritescode/elrond-alt' }}
+  # One shared image; the tag is what separates the implementations.
+  IMAGE_NAME: ${{ vars.DOCKERHUB_IMAGE || 'tebwritescode/elrond' }}
 
 jobs:
   publish:
@@ -57,23 +63,15 @@ jobs:
         with:
           images: ${{ env.IMAGE_NAME }}
           tags: |
-            type=edge,branch=main
+            # Moving tag: always the newest alt build.
+            type=raw,value=alt-beta
+            # Immutable per-release tag, e.g. 0.1.0-alt.beta, from a git tag.
             type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}}
-          # `latest` is attached by the rule below rather than by this action, so a
-          # pre-release tag cannot claim it.
           flavor: |
+            # `latest` is never published from this branch. Both implementations
+            # are in beta; whichever is promoted claims `latest` deliberately, not
+            # as a side effect of a build.
             latest=false
-
-      - name: Decide whether this is a stable release
-        id: stability
-        run: |
-          if [[ "${GITHUB_REF}" =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "stable=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "stable=false" >> "$GITHUB_OUTPUT"
-          fi
 
       - name: Build and push
         id: build
@@ -82,9 +80,7 @@ jobs:
           context: .
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: |
-            ${{ steps.meta.outputs.tags }}
-            ${{ steps.stability.outputs.stable == 'true' && format('{0}:latest', env.IMAGE_NAME) || '' }}
+          tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
@@ -96,22 +92,27 @@ jobs:
       - name: Scan the published image
         uses: aquasecurity/trivy-action@0.28.0
         with:
+          # Scanned by digest, so this is provably the image just pushed rather
+          # than whatever a shared tag happens to point at by now.
           image-ref: ${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
           format: table
           severity: HIGH,CRITICAL
+          exit-code: '1'
           # Unfixed advisories are reported but do not fail the build: there is no
           # action to take on them, and a permanently red pipeline gets ignored.
-          exit-code: '1'
           ignore-unfixed: true
 
-      - name: Update the Docker Hub description
-        # Only from main, and skipped silently when the credential is absent so a
-        # fork without it does not fail the whole run.
-        if: github.ref == 'refs/heads/main' && env.HAS_DOCKERHUB_CREDENTIALS == 'true'
-        uses: peter-evans/dockerhub-description@v4
-        continue-on-error: true
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-          repository: ${{ env.IMAGE_NAME }}
-          readme-filepath: ./README.md
+      - name: Summarise what was published
+        run: |
+          {
+            echo "### Published"
+            echo
+            echo "| Field | Value |"
+            echo "| --- | --- |"
+            echo "| Image | \`${IMAGE_NAME}\` |"
+            echo "| Digest | \`${DIGEST}\` |"
+            echo "| Tags | \`${TAGS//$'\n'/\`, \`}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          TAGS: ${{ steps.meta.outputs.tags }}

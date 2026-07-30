@@ -8,6 +8,12 @@ versions, and publishing reproducible professional binders.
 > and no git history with the other build, and it deliberately occupies different
 > ports (API `3100`, dev server `5273`) and cookie names (`elrond_alt_*`) so both
 > can run on one host at the same time.
+>
+> Both builds publish to one GitHub repository and one Docker Hub image, separated
+> by branch and tag. This one owns the `alt` branch and the `alt-beta` image tag;
+> the other owns `main` and `beta`. Neither publishes `latest` while both are in
+> beta. The full convention, including the sanitisation checklist that runs before
+> any public push, is in [docs/publishing.md](docs/publishing.md).
 
 ## Status
 

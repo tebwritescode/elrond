@@ -1,16 +1,21 @@
-# Quality gates for Elrond.
+# Quality gates for the alt implementation of Elrond.
 #
 # Lives in .github/workflows because both GitHub Actions and Gitea Actions read
 # that path, so one file serves either runner.
+#
+# Scoped to the `alt` branch. Two implementations share this repository on
+# separate branches, and a workflow only runs for events on the branch it lives
+# on, so keeping the trigger narrow is what stops the two from interfering. See
+# docs/publishing.md.
 
-name: CI
+name: CI (alt)
 
 on:
   push:
-    branches: [main]
-    tags: ['v*']
+    branches: [alt]
+    tags: ['v*-alt.beta']
   pull_request:
-    branches: [main]
+    branches: [alt]
   workflow_dispatch:
 
 # Cancel superseded runs on the same ref; only the newest result matters.
