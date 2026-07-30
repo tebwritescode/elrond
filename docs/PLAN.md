@@ -236,10 +236,11 @@ Development uses small Conventional Commits. Semantic-version milestones are:
 - `v0.9.0`: security, accessibility, migration, and performance hardening.
 - `v1.0.0`: complete supported release.
 
-GitHub Actions will run Rust and frontend quality gates, integration tests,
-multi-stage Docker builds, image scanning, and SBOM generation. `main` publishes
-an `edge` image. A `vX.Y.Z` tag publishes `X.Y.Z`, `X.Y`, and `X`; `latest` is
-published only for stable semantic-version releases.
+GitHub Actions run Rust and frontend quality gates, multi-stage Docker builds,
+image scanning, and SBOM generation. While the two independent implementations
+are compared, this primary `main` branch publishes only the `beta` moving tag and
+`<semver>-beta` releases. It never publishes `latest`. The shared branch and tag
+contract is maintained in `docs/publishing.md` on the GitHub `alt` branch.
 
 The source repository is published to Gitea and GitHub. Docker images are
 published to Docker Hub using repository secrets; credential values are never
