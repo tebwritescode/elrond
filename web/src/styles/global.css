@@ -1149,6 +1149,36 @@ h1 {
   padding: 22px 26px 26px;
 }
 
+.import-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  margin-bottom: 17px;
+  padding: 4px;
+  background: #ebe8df;
+  border-radius: 8px;
+}
+
+.import-tabs button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 37px;
+  color: var(--ink-muted);
+  font-size: 10px;
+  font-weight: 750;
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+}
+
+.import-tabs button[aria-selected="true"] {
+  color: var(--forest);
+  background: white;
+  box-shadow: 0 2px 8px rgb(25 37 32 / 8%);
+}
+
 .hierarchy-explainer {
   display: flex;
   align-items: flex-start;
@@ -1224,6 +1254,16 @@ h1 {
 
 .import-root-field {
   margin-top: 19px;
+}
+
+.import-root-field select {
+  width: 100%;
+  min-height: 43px;
+  padding: 0 11px;
+  color: var(--ink);
+  background: white;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
 }
 
 .import-complete {

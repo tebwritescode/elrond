@@ -180,6 +180,62 @@ impl ImportService {
         self.repository.commit_import(prepared, actor_user_id).await
     }
 
+    pub async fn import_file(
+        &self,
+        content: Vec<u8>,
+        filename: &str,
+        category_path: Vec<String>,
+        actor_user_id: &str,
+    ) -> Result<ImportSummary, ImportError> {
+        if content.len() as u64 > Self::MAX_FILE_BYTES {
+            return Err(ImportError::FileSizeLimit);
+        }
+        let filename = Path::new(filename)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or(ImportError::UnsafeEntry)?
+            .to_owned();
+        let extension = Path::new(&filename)
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .map(str::to_ascii_lowercase)
+            .unwrap_or_default();
+        let media_type = supported_media_type(&extension).ok_or(ImportError::InvalidFileType)?;
+        if !content_matches_extension(&extension, &content) {
+            return Err(ImportError::InvalidFileType);
+        }
+        let mut category_path: Vec<String> = category_path
+            .into_iter()
+            .filter_map(|name| clean_category_name(&name))
+            .take(Self::MAX_DEPTH)
+            .collect();
+        if category_path.is_empty() {
+            category_path.push("Imported".into());
+        }
+        let categories = (1..=category_path.len())
+            .map(|depth| category_path[..depth].to_vec())
+            .collect();
+        let title = Path::new(&filename)
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .unwrap_or(&filename)
+            .replace(['_', '-'], " ");
+        let sha256 = hex::encode(Sha256::digest(&content));
+        let import = PreparedImport {
+            categories,
+            documents: vec![PreparedDocument {
+                category_path,
+                filename,
+                title,
+                media_type: media_type.into(),
+                sha256,
+                content,
+            }],
+            unsupported_skipped: 0,
+        };
+        self.repository.commit_import(import, actor_user_id).await
+    }
+
     fn prepare_zip(
         archive_bytes: Vec<u8>,
         root_category: &str,

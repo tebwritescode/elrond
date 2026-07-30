@@ -115,6 +115,24 @@ export async function importZipArchive(
   return response.json() as Promise<ImportSummary>;
 }
 
+export async function uploadDocument(
+  file: File,
+  categoryPath: string[],
+): Promise<ImportSummary> {
+  const form = new FormData();
+  form.append("file", file);
+  form.append("categoryPath", JSON.stringify(categoryPath));
+  const response = await fetch("/api/v1/documents", {
+    method: "POST",
+    body: form,
+  });
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(body?.error ?? "The document could not be uploaded.");
+  }
+  return response.json() as Promise<ImportSummary>;
+}
+
 export async function fetchDocuments(signal?: AbortSignal): Promise<DocumentSummary[]> {
   const response = await fetch("/api/v1/documents", {
     headers: { Accept: "application/json" },

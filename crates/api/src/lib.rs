@@ -36,7 +36,12 @@ pub fn router(state: ApiState) -> Router {
             "/api/v1/imports/zip",
             post(import_zip).layer(DefaultBodyLimit::max(256 * 1024 * 1024)),
         )
-        .route("/api/v1/documents", get(documents))
+        .route(
+            "/api/v1/documents",
+            get(documents)
+                .post(upload_document)
+                .layer(DefaultBodyLimit::max(110 * 1024 * 1024)),
+        )
         .route("/api/v1/categories", get(categories))
         .with_state(state)
 }
@@ -218,6 +223,67 @@ async fn documents(
         .await
         .map(Json)
         .map_err(catalog_error_response)
+}
+
+async fn upload_document(
+    State(state): State<ApiState>,
+    headers: HeaderMap,
+    mut multipart: Multipart,
+) -> Result<Json<impl Serialize>, (StatusCode, Json<Value>)> {
+    let user = authenticated_user(&state, &headers).await?;
+    let mut file = None;
+    let mut category_path = Vec::new();
+    while let Some(field) = multipart.next_field().await.map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "The upload form could not be read." })),
+        )
+    })? {
+        match field.name() {
+            Some("file") => {
+                let filename = field.file_name().map(str::to_owned).ok_or_else(|| {
+                    (
+                        StatusCode::BAD_REQUEST,
+                        Json(json!({ "error": "The document filename is missing." })),
+                    )
+                })?;
+                let content = field.bytes().await.map_err(|_| {
+                    (
+                        StatusCode::BAD_REQUEST,
+                        Json(json!({ "error": "The document could not be read." })),
+                    )
+                })?;
+                file = Some((filename, content.to_vec()));
+            }
+            Some("categoryPath") => {
+                let value = field.text().await.map_err(|_| {
+                    (
+                        StatusCode::BAD_REQUEST,
+                        Json(json!({ "error": "The category path could not be read." })),
+                    )
+                })?;
+                category_path = serde_json::from_str(&value).map_err(|_| {
+                    (
+                        StatusCode::BAD_REQUEST,
+                        Json(json!({ "error": "The category path is invalid." })),
+                    )
+                })?;
+            }
+            _ => {}
+        }
+    }
+    let (filename, content) = file.ok_or_else(|| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "Choose a document to upload." })),
+        )
+    })?;
+    state
+        .imports
+        .import_file(content, &filename, category_path, &user.id)
+        .await
+        .map(Json)
+        .map_err(import_error_response)
 }
 
 async fn categories(

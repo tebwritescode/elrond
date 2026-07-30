@@ -120,6 +120,7 @@ export function App() {
         </section>
       )}
       <ZipImportDialog
+        categories={categories}
         onClose={() => setImportOpen(false)}
         onImported={() => setReloadKey((key) => key + 1)}
         open={importOpen}
