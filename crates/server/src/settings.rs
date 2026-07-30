@@ -22,6 +22,11 @@ pub struct Settings {
     pub data_dir: PathBuf,
     /// SQLite connection URL.
     pub database_url: String,
+    /// Largest single stored file, in bytes.
+    ///
+    /// Enforced by the blob store as well as by the HTTP body limit, so a future
+    /// non-HTTP ingestion path (the ZIP importer) is bounded too.
+    pub max_blob_bytes: u64,
     /// HTTP-layer settings.
     pub api: ApiConfig,
     /// Session lifetimes.
@@ -126,6 +131,7 @@ impl Settings {
             bind_address,
             data_dir,
             database_url,
+            max_blob_bytes: max_body_bytes as u64,
             api,
             session_policy: SessionPolicy::default(),
             stirling_url,

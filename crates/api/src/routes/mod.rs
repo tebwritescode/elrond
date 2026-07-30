@@ -1,5 +1,7 @@
 //! Router assembly and cross-cutting middleware.
 
+pub mod categories;
+pub mod documents;
 pub mod health;
 pub mod session;
 pub mod users;
@@ -9,7 +11,7 @@ use axum::extract::{DefaultBodyLimit, Request, State};
 use axum::http::{HeaderName, HeaderValue, Method, header};
 use axum::middleware::{self, Next};
 use axum::response::Response;
-use axum::routing::{delete, get, post};
+use axum::routing::{delete, get, patch, post};
 use axum_extra::extract::cookie::CookieJar;
 use elrond_application::ApplicationError;
 use tower_http::trace::TraceLayer;
@@ -36,6 +38,24 @@ pub fn router(state: AppState) -> Router {
         .route("/session", delete(session::sign_out))
         .route("/me", get(session::me))
         .route("/users", get(users::list))
+        .route(
+            "/categories",
+            get(categories::tree).post(categories::create),
+        )
+        .route(
+            "/categories/{id}",
+            patch(categories::update).delete(categories::delete),
+        )
+        .route("/tags", get(documents::list_tags))
+        .route("/documents", get(documents::list).post(documents::upload))
+        .route(
+            "/documents/{id}",
+            get(documents::detail).patch(documents::update),
+        )
+        .route("/documents/{id}/lifecycle", post(documents::transition))
+        .route("/documents/{id}/versions", post(documents::add_version))
+        .route("/versions/{id}/original", get(documents::download_original))
+        .route("/versions/{id}/pdf", get(documents::download_pdf))
         // Without this, an unmatched API path would fall through to the SPA
         // fallback and answer a JSON client with an HTML page.
         .fallback(unknown_endpoint)

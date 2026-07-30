@@ -4,19 +4,13 @@
 //! and the CSPRNG — so the cookie, CSRF, and status-code contracts are checked as
 //! a client actually experiences them, not as unit tests of the pieces.
 
-use std::sync::Arc;
+mod support;
 
 use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, Response, StatusCode, header};
+use elrond_api::ApiConfig;
 use elrond_api::cookies::{CSRF_COOKIE, CSRF_HEADER, SESSION_COOKIE};
-use elrond_api::{ApiConfig, AppState, router};
-use elrond_application::auth::AuthService;
-use elrond_application::ports::SessionPolicy;
-use elrond_infrastructure::{
-    Argon2idHasher, Database, RandomSessionTokens, SqliteSessionRepository, SqliteUserRepository,
-    SystemClock,
-};
 use serde_json::{Value, json};
 use tower::ServiceExt;
 
@@ -67,24 +61,7 @@ async fn app() -> Router {
 
 /// Builds a router with a specific HTTP configuration.
 async fn app_with_config(config: ApiConfig) -> Router {
-    let database = Database::connect_in_memory()
-        .await
-        .expect("in-memory database");
-    let tokens = Arc::new(RandomSessionTokens);
-    let auth = AuthService::new(
-        Arc::new(SqliteUserRepository::new(&database)),
-        Arc::new(SqliteSessionRepository::new(&database)),
-        Arc::new(Argon2idHasher::new()),
-        tokens.clone(),
-        Arc::new(SystemClock),
-        SessionPolicy::default(),
-    );
-    router(AppState::new(
-        auth,
-        tokens,
-        config,
-        SessionPolicy::default(),
-    ))
+    support::build_with(config).await.router
 }
 
 /// Extracts a cookie value from the response's `Set-Cookie` headers.

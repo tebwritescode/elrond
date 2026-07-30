@@ -4,19 +4,14 @@
 //! router-level layers, and the shell's `no-cache` silently overrode the assets'
 //! `immutable` — disabling asset caching entirely with no visible symptom.
 
+mod support;
+
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, Response, StatusCode, header};
-use elrond_api::{ApiConfig, AppState, router};
-use elrond_application::auth::AuthService;
-use elrond_application::ports::SessionPolicy;
-use elrond_infrastructure::{
-    Argon2idHasher, Database, RandomSessionTokens, SqliteSessionRepository, SqliteUserRepository,
-    SystemClock,
-};
+use elrond_api::ApiConfig;
 use tower::ServiceExt;
 
 /// Name of the hashed asset written by the fixture.
@@ -40,28 +35,11 @@ fn build_fixture(label: &str) -> PathBuf {
 
 /// Builds a router serving `web_dir`.
 async fn app(web_dir: &Path) -> Router {
-    let database = Database::connect_in_memory()
-        .await
-        .expect("in-memory database");
-    let tokens = Arc::new(RandomSessionTokens);
-    let auth = AuthService::new(
-        Arc::new(SqliteUserRepository::new(&database)),
-        Arc::new(SqliteSessionRepository::new(&database)),
-        Arc::new(Argon2idHasher::new()),
-        tokens.clone(),
-        Arc::new(SystemClock),
-        SessionPolicy::default(),
-    );
     let config = ApiConfig {
         web_dir: Some(web_dir.to_path_buf()),
         ..ApiConfig::development()
     };
-    router(AppState::new(
-        auth,
-        tokens,
-        config,
-        SessionPolicy::default(),
-    ))
+    support::build_with(config).await.router
 }
 
 /// Issues a GET and returns the response.

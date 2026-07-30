@@ -11,11 +11,15 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
+use elrond_api::state::AppServices;
 use elrond_api::{AppState, router};
 use elrond_application::auth::AuthService;
+use elrond_application::categories::CategoryService;
+use elrond_application::documents::DocumentService;
 use elrond_infrastructure::{
-    Argon2idHasher, Database, DatabaseSettings, RandomSessionTokens, SqliteSessionRepository,
-    SqliteUserRepository, SystemClock,
+    Argon2idHasher, Database, DatabaseSettings, FilesystemBlobStore, MagicByteInspector,
+    RandomSessionTokens, SqliteCategoryRepository, SqliteDocumentRepository, SqliteSearchIndex,
+    SqliteSessionRepository, SqliteTagRepository, SqliteUserRepository, SystemClock,
 };
 use settings::Settings;
 use tokio::signal;
@@ -44,9 +48,19 @@ async fn main() -> Result<()> {
         .await
         .context("could not open the database")?;
 
-    // The composition root: ports on the left, adapters on the right.
+    // The composition root: ports on the left, adapters on the right. This is the
+    // only file that knows which concrete type satisfies which trait.
     let users = Arc::new(SqliteUserRepository::new(&database));
     let sessions = Arc::new(SqliteSessionRepository::new(&database));
+    let categories_repo = Arc::new(SqliteCategoryRepository::new(&database));
+    let documents_repo = Arc::new(SqliteDocumentRepository::new(&database));
+    let tags_repo = Arc::new(SqliteTagRepository::new(&database));
+    let search = Arc::new(SqliteSearchIndex::new(&database));
+    let blobs = Arc::new(FilesystemBlobStore::new(
+        settings.data_dir.clone(),
+        settings.max_blob_bytes,
+    ));
+    let inspector = Arc::new(MagicByteInspector);
     let hasher = Arc::new(Argon2idHasher::new());
     let tokens = Arc::new(RandomSessionTokens);
     let clock = Arc::new(SystemClock);
@@ -56,13 +70,29 @@ async fn main() -> Result<()> {
         sessions,
         hasher,
         tokens.clone(),
-        clock,
+        clock.clone(),
         settings.session_policy,
     );
 
+    let categories = CategoryService::new(categories_repo, documents_repo.clone(), clock.clone());
+    let documents = DocumentService::new(
+        documents_repo,
+        tags_repo.clone(),
+        blobs,
+        inspector,
+        search,
+        categories.clone(),
+        clock,
+    );
+
     let state = AppState::new(
-        auth.clone(),
-        tokens,
+        AppServices {
+            auth: auth.clone(),
+            categories,
+            documents,
+            tags: tags_repo,
+            tokens,
+        },
         settings.api.clone(),
         settings.session_policy,
     );

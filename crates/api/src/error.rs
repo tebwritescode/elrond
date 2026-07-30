@@ -51,6 +51,23 @@ impl From<ApplicationError> for ApiError {
     }
 }
 
+/// Domain validation failures reach handlers directly when a handler parses a
+/// value object itself, so they route through the same mapping as a use-case
+/// failure rather than getting a second, divergent status code.
+impl From<elrond_domain::DomainError> for ApiError {
+    fn from(error: elrond_domain::DomainError) -> Self {
+        Self::Application(ApplicationError::Domain(error))
+    }
+}
+
+/// Likewise for the few endpoints that read a repository directly because the
+/// operation has no business rules beyond authorization.
+impl From<RepositoryError> for ApiError {
+    fn from(error: RepositoryError) -> Self {
+        Self::Application(ApplicationError::Repository(error))
+    }
+}
+
 impl From<JsonRejection> for ApiError {
     fn from(rejection: JsonRejection) -> Self {
         // Axum's own rejection renders as plain text, which would be the only
