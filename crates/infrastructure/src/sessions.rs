@@ -127,7 +127,7 @@ fn map_session(row: &SqliteRow) -> Result<SessionRecord, RepositoryError> {
 #[cfg(test)]
 mod tests {
     use elrond_application::ports::{NewUser, PasswordHash, UserRepository};
-    use elrond_domain::{DisplayName, EmailAddress, Role};
+    use elrond_domain::{Role, Username};
     use time::Duration;
 
     use super::*;
@@ -141,8 +141,7 @@ mod tests {
         let user = users
             .insert(NewUser {
                 id: UserId::new(),
-                email: EmailAddress::parse("admin@example.org").expect("valid"),
-                display_name: DisplayName::parse("Records Team").expect("valid"),
+                username: Username::parse("records.admin").expect("valid"),
                 role: Role::Admin,
                 password_hash: PasswordHash::new("$argon2id$placeholder".to_owned()),
                 created_at: now,

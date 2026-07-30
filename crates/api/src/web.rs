@@ -8,6 +8,7 @@ use std::path::Path;
 use axum::Router;
 use axum::http::{StatusCode, header};
 use axum::response::{Html, IntoResponse, Response};
+use tower::ServiceBuilder;
 use tower_http::set_header::SetResponseHeaderLayer;
 
 use crate::state::AppState;
@@ -33,29 +34,36 @@ pub fn routes(web_dir: Option<&Path>) -> Router<AppState> {
 
     // Hashed filenames change whenever content changes, so they can be cached
     // indefinitely. This is the single biggest repeat-visit win available.
-    let assets = tower_http::services::ServeDir::new(dir.join(ASSET_DIR))
-        .precompressed_gzip()
-        .append_index_html_on_directories(false);
-    let immutable = SetResponseHeaderLayer::overriding(
-        header::CACHE_CONTROL,
-        header::HeaderValue::from_static("public, max-age=31536000, immutable"),
-    );
+    //
+    // The cache headers are attached with a ServiceBuilder per service rather
+    // than with Router::layer. A router-level layer wraps everything mounted so
+    // far, so the shell's `no-cache` would override the assets' `immutable` and
+    // silently disable asset caching altogether.
+    let assets = ServiceBuilder::new()
+        .layer(SetResponseHeaderLayer::overriding(
+            header::CACHE_CONTROL,
+            header::HeaderValue::from_static("public, max-age=31536000, immutable"),
+        ))
+        .service(
+            tower_http::services::ServeDir::new(dir.join(ASSET_DIR))
+                .precompressed_gzip()
+                .append_index_html_on_directories(false),
+        );
 
     // index.html must never be cached, or a client keeps loading an old bundle
     // that references assets the new deployment no longer has.
-    let index_service = tower_http::services::ServeFile::new(index);
-    let no_store = SetResponseHeaderLayer::overriding(
-        header::CACHE_CONTROL,
-        header::HeaderValue::from_static("no-cache, must-revalidate"),
-    );
+    let shell = ServiceBuilder::new()
+        .layer(SetResponseHeaderLayer::overriding(
+            header::CACHE_CONTROL,
+            header::HeaderValue::from_static("no-cache, must-revalidate"),
+        ))
+        .service(tower_http::services::ServeFile::new(index));
 
     Router::new()
-        .nest_service(&format!("/{ASSET_DIR}"), assets.clone())
-        .layer(immutable)
+        .nest_service(&format!("/{ASSET_DIR}"), assets)
         // Any unmatched path is a client-side route, so it gets the shell and
         // React resolves it. Deep links therefore survive a refresh.
-        .fallback_service(index_service)
-        .layer(no_store)
+        .fallback_service(shell)
 }
 
 /// Response shown when the API is running but the client has not been built.

@@ -177,8 +177,7 @@ async fn setup_admin(app: &Router) -> Client {
         "/api/v1/setup",
         &client,
         Some(json!({
-            "email": "admin@example.org",
-            "display_name": "Records Admin",
+            "username": "records.admin",
             "password": "a sufficiently long passphrase"
         })),
     )
@@ -235,9 +234,12 @@ async fn setup_creates_an_administrator_and_signs_it_in() {
     let response = get(&app, "/api/v1/me", &client).await;
     assert_eq!(response.status(), StatusCode::OK);
     let body = json_body(response).await;
-    assert_eq!(body["email"], "admin@example.org");
+    assert_eq!(body["username"], "records.admin");
     assert_eq!(body["role"], "admin");
-    assert_eq!(body["display_name"], "Records Admin");
+    assert!(
+        body.get("email").is_none(),
+        "the API must not expose an email field: {body}"
+    );
 }
 
 #[tokio::test]
@@ -254,8 +256,7 @@ async fn setup_closes_permanently_once_an_account_exists() {
         "/api/v1/setup",
         &client,
         Some(json!({
-            "email": "second@example.org",
-            "display_name": "Second Admin",
+            "username": "second.admin",
             "password": "another long passphrase"
         })),
     )
@@ -274,8 +275,7 @@ async fn the_response_never_contains_a_password_hash() {
         "/api/v1/setup",
         &client,
         Some(json!({
-            "email": "admin@example.org",
-            "display_name": "Records Admin",
+            "username": "records.admin",
             "password": "a sufficiently long passphrase"
         })),
     )
@@ -306,8 +306,7 @@ async fn a_state_changing_request_without_a_csrf_token_is_refused() {
         "/api/v1/setup",
         &Client::anonymous(),
         Some(json!({
-            "email": "admin@example.org",
-            "display_name": "Records Admin",
+            "username": "records.admin",
             "password": "a sufficiently long passphrase"
         })),
     )
@@ -334,8 +333,7 @@ async fn a_mismatched_csrf_token_is_refused() {
                 .header(CSRF_HEADER, "a-guessed-value")
                 .body(Body::from(
                     json!({
-                        "email": "admin@example.org",
-                        "display_name": "Records Admin",
+                        "username": "records.admin",
                         "password": "a sufficiently long passphrase"
                     })
                     .to_string(),
@@ -390,8 +388,7 @@ async fn a_request_from_the_configured_origin_is_accepted() {
                 .header(CSRF_HEADER, client.csrf.clone().expect("token"))
                 .body(Body::from(
                     json!({
-                        "email": "admin@example.org",
-                        "display_name": "Records Admin",
+                        "username": "records.admin",
                         "password": "a sufficiently long passphrase"
                     })
                     .to_string(),
@@ -423,8 +420,7 @@ async fn a_weak_password_is_rejected_with_the_offending_field() {
         "/api/v1/setup",
         &client,
         Some(json!({
-            "email": "admin@example.org",
-            "display_name": "Records Admin",
+            "username": "records.admin",
             "password": "short"
         })),
     )
@@ -437,7 +433,7 @@ async fn a_weak_password_is_rejected_with_the_offending_field() {
 }
 
 #[tokio::test]
-async fn a_malformed_email_is_rejected() {
+async fn a_malformed_username_is_rejected() {
     let app = app().await;
     let (client, _) = bootstrap(&app).await;
 
@@ -447,15 +443,14 @@ async fn a_malformed_email_is_rejected() {
         "/api/v1/setup",
         &client,
         Some(json!({
-            "email": "not-an-address",
-            "display_name": "Records Admin",
+            "username": "!!bad",
             "password": "a sufficiently long passphrase"
         })),
     )
     .await;
 
     assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
-    assert_eq!(json_body(response).await["field"], "email");
+    assert_eq!(json_body(response).await["field"], "username");
 }
 
 #[tokio::test]
@@ -495,7 +490,7 @@ async fn signing_in_with_the_wrong_password_is_unauthorized() {
         "/api/v1/session",
         &admin,
         Some(json!({
-            "email": "admin@example.org",
+            "username": "records.admin",
             "password": "definitely the wrong one"
         })),
     )
@@ -516,7 +511,7 @@ async fn an_unknown_account_is_indistinguishable_from_a_wrong_password() {
         "/api/v1/session",
         &admin,
         Some(json!({
-            "email": "nobody@example.org",
+            "username": "nobody",
             "password": "definitely the wrong one"
         })),
     )
@@ -539,7 +534,7 @@ async fn signing_in_rotates_the_csrf_token() {
         "/api/v1/session",
         &client,
         Some(json!({
-            "email": "admin@example.org",
+            "username": "records.admin",
             "password": "a sufficiently long passphrase"
         })),
     )
@@ -565,7 +560,7 @@ async fn a_new_sign_in_reports_an_expiry() {
         "/api/v1/session",
         &admin,
         Some(json!({
-            "email": "admin@example.org",
+            "username": "records.admin",
             "password": "a sufficiently long passphrase"
         })),
     )
@@ -647,7 +642,7 @@ async fn administrators_can_list_accounts() {
     let body = json_body(response).await;
     let users = body.as_array().expect("an array of accounts");
     assert_eq!(users.len(), 1);
-    assert_eq!(users[0]["email"], "admin@example.org");
+    assert_eq!(users[0]["username"], "records.admin");
     assert_eq!(users[0]["role"], "admin");
 }
 
@@ -676,7 +671,7 @@ async fn repeated_credential_failures_are_rate_limited() {
             "/api/v1/session",
             &admin,
             Some(json!({
-                "email": "admin@example.org",
+                "username": "records.admin",
                 "password": "wrong every time"
             })),
         )
@@ -710,7 +705,7 @@ async fn a_successful_sign_in_clears_the_throttle() {
             "POST",
             "/api/v1/session",
             &admin,
-            Some(json!({ "email": "admin@example.org", "password": "wrong" })),
+            Some(json!({ "username": "records.admin", "password": "wrong" })),
         )
         .await;
     }
@@ -721,7 +716,7 @@ async fn a_successful_sign_in_clears_the_throttle() {
         "/api/v1/session",
         &admin,
         Some(json!({
-            "email": "admin@example.org",
+            "username": "records.admin",
             "password": "a sufficiently long passphrase"
         })),
     )
@@ -735,7 +730,7 @@ async fn a_successful_sign_in_clears_the_throttle() {
             "POST",
             "/api/v1/session",
             &admin,
-            Some(json!({ "email": "admin@example.org", "password": "wrong" })),
+            Some(json!({ "username": "records.admin", "password": "wrong" })),
         )
         .await;
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);

@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use elrond_domain::{DisplayName, EmailAddress, PasswordPolicy, Role, SessionId, User, UserId};
+use elrond_domain::{PasswordPolicy, Role, SessionId, User, UserId, Username};
 use time::OffsetDateTime;
 
 use crate::error::{ApplicationError, ApplicationResult};
@@ -30,10 +30,8 @@ impl SetupState {
 /// Input for creating the first administrator.
 #[derive(Debug, Clone)]
 pub struct FirstRunSetupInput {
-    /// Raw email address, validated by the use case.
-    pub email: String,
-    /// Raw display name, validated by the use case.
-    pub display_name: String,
+    /// Raw username, validated by the use case.
+    pub username: String,
     /// Raw password, validated then immediately hashed.
     pub password: String,
 }
@@ -41,8 +39,8 @@ pub struct FirstRunSetupInput {
 /// Input for signing in.
 #[derive(Debug, Clone)]
 pub struct SignInInput {
-    /// Raw email address.
-    pub email: String,
+    /// Raw username.
+    pub username: String,
     /// Raw password.
     pub password: String,
 }
@@ -134,8 +132,7 @@ impl AuthService {
             return Err(ApplicationError::SetupAlreadyCompleted);
         }
 
-        let email = EmailAddress::parse(&input.email)?;
-        let display_name = DisplayName::parse(&input.display_name)?;
+        let username = Username::parse(&input.username)?;
         PasswordPolicy::validate(&input.password)?;
 
         let password_hash = self.hasher.hash(input.password).await?;
@@ -143,8 +140,7 @@ impl AuthService {
             .users
             .insert(NewUser {
                 id: UserId::new(),
-                email,
-                display_name,
+                username,
                 role: Role::Admin,
                 password_hash,
                 created_at: self.clock.now(),
@@ -157,16 +153,16 @@ impl AuthService {
 
     /// Verifies credentials and starts a session.
     pub async fn sign_in(&self, input: SignInInput) -> ApplicationResult<EstablishedSession> {
-        // An unparseable address is reported as bad credentials rather than as a
-        // validation error, so the endpoint gives away nothing about which
-        // addresses are registered.
-        let Ok(email) = EmailAddress::parse(&input.email) else {
+        // An unparseable username is reported as bad credentials rather than as a
+        // validation error, so the endpoint gives away nothing about which names
+        // are registered.
+        let Ok(username) = Username::parse(&input.username) else {
             return Err(ApplicationError::InvalidCredentials);
         };
 
-        let Some(candidate) = self.users.find_credentialed_by_email(&email).await? else {
+        let Some(candidate) = self.users.find_credentialed_by_username(&username).await? else {
             // Hash the supplied password anyway. Returning early here would make
-            // "unknown address" measurably faster than "wrong password" and turn
+            // "unknown username" measurably faster than "wrong password" and turn
             // response latency into an account-enumeration oracle.
             let _ = self.hasher.hash(input.password).await;
             return Err(ApplicationError::InvalidCredentials);
@@ -282,11 +278,13 @@ mod tests {
     use super::*;
     use crate::testing::TestEnvironment;
 
+    /// The passphrase used throughout these tests.
+    const PASSPHRASE: &str = "correct horse battery";
+
     fn setup_input() -> FirstRunSetupInput {
         FirstRunSetupInput {
-            email: "Admin@Example.ORG".to_owned(),
-            display_name: "  Records Admin  ".to_owned(),
-            password: "correct horse battery".to_owned(),
+            username: "  Records.Admin  ".to_owned(),
+            password: PASSPHRASE.to_owned(),
         }
     }
 
@@ -309,8 +307,7 @@ mod tests {
             .expect("setup succeeds");
 
         assert_eq!(established.user.role, Role::Admin);
-        assert_eq!(established.user.email.as_str(), "admin@example.org");
-        assert_eq!(established.user.display_name.as_str(), "Records Admin");
+        assert_eq!(established.user.username.as_str(), "records.admin");
         assert!(!established.token.expose().is_empty());
 
         assert_eq!(
@@ -330,7 +327,7 @@ mod tests {
         let error = env
             .auth()
             .complete_first_run_setup(FirstRunSetupInput {
-                email: "second@example.org".to_owned(),
+                username: "second.admin".to_owned(),
                 ..setup_input()
             })
             .await
@@ -361,6 +358,20 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn setup_rejects_a_malformed_username() {
+        let env = TestEnvironment::new();
+        let error = env
+            .auth()
+            .complete_first_run_setup(FirstRunSetupInput {
+                username: "no".to_owned(),
+                ..setup_input()
+            })
+            .await
+            .expect_err("username policy applies");
+        assert_eq!(error.field(), Some("username"));
+    }
+
+    #[tokio::test]
     async fn sign_in_accepts_correct_credentials_case_insensitively() {
         let env = TestEnvironment::new();
         env.auth()
@@ -371,12 +382,12 @@ mod tests {
         let established = env
             .auth()
             .sign_in(SignInInput {
-                email: "ADMIN@example.org".to_owned(),
-                password: "correct horse battery".to_owned(),
+                username: "RECORDS.ADMIN".to_owned(),
+                password: PASSPHRASE.to_owned(),
             })
             .await
             .expect("sign-in succeeds");
-        assert_eq!(established.user.email.as_str(), "admin@example.org");
+        assert_eq!(established.user.username.as_str(), "records.admin");
     }
 
     #[tokio::test]
@@ -390,7 +401,7 @@ mod tests {
         let wrong_password = env
             .auth()
             .sign_in(SignInInput {
-                email: "admin@example.org".to_owned(),
+                username: "records.admin".to_owned(),
                 password: "not the password".to_owned(),
             })
             .await
@@ -398,15 +409,15 @@ mod tests {
         let unknown_account = env
             .auth()
             .sign_in(SignInInput {
-                email: "nobody@example.org".to_owned(),
+                username: "nobody".to_owned(),
                 password: "not the password".to_owned(),
             })
             .await
             .expect_err("refused");
-        let malformed_address = env
+        let malformed_username = env
             .auth()
             .sign_in(SignInInput {
-                email: "not-an-address".to_owned(),
+                username: "!!".to_owned(),
                 password: "not the password".to_owned(),
             })
             .await
@@ -414,7 +425,7 @@ mod tests {
 
         assert_eq!(wrong_password.code(), "invalid_credentials");
         assert_eq!(unknown_account.code(), "invalid_credentials");
-        assert_eq!(malformed_address.code(), "invalid_credentials");
+        assert_eq!(malformed_username.code(), "invalid_credentials");
     }
 
     #[tokio::test]

@@ -1,0 +1,27 @@
+# Keep the build context small and free of anything sensitive.
+target/
+web/node_modules/
+web/dist/
+node_modules/
+
+.git/
+.github/
+
+# Runtime state must never be baked into an image.
+data/
+dev-data/
+*.db
+*.db-wal
+*.db-shm
+
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+*.log
+docs/
+tests/
+.vscode/
+.idea/

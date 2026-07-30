@@ -264,8 +264,8 @@ mod tests {
     async fn deleting_a_user_cascades_to_its_sessions() {
         let db = Database::connect_in_memory().await.expect("connects");
         sqlx::query(
-            "INSERT INTO users (id, email, display_name, role, password_hash, created_at, updated_at)
-             VALUES (x'00000000000000000000000000000001', 'a@example.org', 'A', 'admin', 'hash',
+            "INSERT INTO users (id, username, role, password_hash, created_at, updated_at)
+             VALUES (x'00000000000000000000000000000001', 'first.admin', 'admin', 'hash',
                      '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
         )
         .execute(db.pool())

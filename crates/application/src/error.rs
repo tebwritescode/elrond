@@ -88,6 +88,14 @@ impl ApplicationError {
         }
     }
 
+    /// The offending field, when the failure is about one.
+    pub const fn field(&self) -> Option<&'static str> {
+        match self {
+            Self::Domain(error) => error.field(),
+            _ => None,
+        }
+    }
+
     /// Whether the failure is the caller's fault.
     ///
     /// Used to decide log severity: client errors are noise at `warn`, server

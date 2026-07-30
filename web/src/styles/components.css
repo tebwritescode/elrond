@@ -1,0 +1,622 @@
+/* Elrond design system components. */
+
+/* ------------------------------------------------------------------ Button */
+
+.el-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--el-space-2);
+  min-height: var(--el-target-min);
+  padding: 0 var(--el-space-4);
+  border: 1px solid transparent;
+  border-radius: var(--el-radius);
+  font-size: var(--el-text-base);
+  font-weight: 550;
+  text-align: center;
+  text-decoration: none;
+  white-space: nowrap;
+  transition:
+    background-color var(--el-duration-fast) var(--el-ease),
+    border-color var(--el-duration-fast) var(--el-ease),
+    color var(--el-duration-fast) var(--el-ease);
+}
+
+.el-button:disabled,
+.el-button[aria-disabled='true'] {
+  /* Kept above the 4.5:1 threshold: a disabled control still has to be readable
+     so users can tell what is unavailable and why. */
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.el-button--primary {
+  background: var(--el-accent);
+  color: var(--el-ink-inverse);
+}
+
+.el-button--primary:hover:not(:disabled, [aria-disabled='true']) {
+  background: var(--el-accent-hover);
+}
+
+.el-button--secondary {
+  background: var(--el-paper-raised);
+  border-color: var(--el-rule-strong);
+  color: var(--el-ink);
+}
+
+.el-button--secondary:hover:not(:disabled, [aria-disabled='true']) {
+  background: var(--el-paper-sunken);
+}
+
+.el-button--ghost {
+  background: transparent;
+  color: var(--el-ink);
+}
+
+.el-button--ghost:hover:not(:disabled, [aria-disabled='true']) {
+  background: var(--el-paper-sunken);
+}
+
+.el-button--danger {
+  background: var(--el-danger);
+  color: var(--el-ink-inverse);
+}
+
+.el-button--sm {
+  min-height: 2rem;
+  padding: 0 var(--el-space-3);
+  font-size: var(--el-text-sm);
+}
+
+.el-button--lg {
+  min-height: 2.875rem;
+  padding: 0 var(--el-space-5);
+  font-size: var(--el-text-md);
+}
+
+.el-button--block {
+  width: 100%;
+}
+
+@media (forced-colors: active) {
+  .el-button {
+    border-color: ButtonBorder;
+  }
+}
+
+/* ------------------------------------------------------------------ Fields */
+
+.el-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--el-space-1);
+}
+
+.el-field__label {
+  font-size: var(--el-text-sm);
+  font-weight: 600;
+}
+
+/* Marked in text as well as with the attribute, so the requirement is not
+   conveyed by a lone asterisk. */
+.el-field__optional {
+  font-weight: 400;
+  color: var(--el-ink-muted);
+}
+
+.el-field__hint {
+  font-size: var(--el-text-xs);
+  color: var(--el-ink-muted);
+}
+
+.el-field__control {
+  min-height: var(--el-target-min);
+  padding: var(--el-space-2) var(--el-space-3);
+  background: var(--el-paper-raised);
+  border: 1px solid var(--el-rule-strong);
+  border-radius: var(--el-radius);
+  color: var(--el-ink);
+  font-size: var(--el-text-base);
+  transition: border-color var(--el-duration-fast) var(--el-ease);
+}
+
+.el-field__control::placeholder {
+  color: var(--el-ink-muted);
+  opacity: 1;
+}
+
+.el-field__control:hover:not(:disabled) {
+  border-color: var(--el-ink-muted);
+}
+
+.el-field__control[aria-invalid='true'] {
+  border-color: var(--el-danger);
+  /* Doubling the border weight means the error state is not signalled by colour
+     alone, which also covers forced-colors mode. */
+  border-width: 2px;
+  padding: calc(var(--el-space-2) - 1px) calc(var(--el-space-3) - 1px);
+}
+
+.el-field__control:disabled {
+  background: var(--el-paper-sunken);
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+.el-field__error {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--el-space-1);
+  font-size: var(--el-text-xs);
+  font-weight: 550;
+  color: var(--el-danger);
+}
+
+/* ----------------------------------------------------------------- Callout */
+
+.el-callout {
+  display: flex;
+  gap: var(--el-space-3);
+  padding: var(--el-space-3) var(--el-space-4);
+  border: 1px solid;
+  border-left-width: 3px;
+  border-radius: var(--el-radius);
+  font-size: var(--el-text-sm);
+}
+
+.el-callout__icon {
+  flex: none;
+  margin-top: 0.1em;
+}
+
+.el-callout__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--el-space-2);
+  min-width: 0;
+}
+
+.el-callout__title {
+  font-family: var(--el-font-ui);
+  font-size: var(--el-text-sm);
+  font-weight: 650;
+}
+
+.el-callout--danger {
+  background: var(--el-danger-wash);
+  border-color: var(--el-danger);
+  color: var(--el-ink);
+}
+
+.el-callout--caution {
+  background: var(--el-caution-wash);
+  border-color: var(--el-caution);
+  color: var(--el-ink);
+}
+
+.el-callout--success {
+  background: var(--el-success-wash);
+  border-color: var(--el-success);
+  color: var(--el-ink);
+}
+
+.el-callout--info {
+  background: var(--el-info-wash);
+  border-color: var(--el-info);
+  color: var(--el-ink);
+}
+
+/* ----------------------------------------------------------------- Spinner */
+
+.el-spinner {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  border: 2px solid currentcolor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: el-spin 700ms linear infinite;
+}
+
+@keyframes el-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Under reduced motion the ring stops rather than disappearing, so the busy
+   state is still visible. */
+@media (prefers-reduced-motion: reduce) {
+  .el-spinner {
+    animation: none;
+    border-top-color: currentcolor;
+    opacity: 0.5;
+  }
+}
+
+/* -------------------------------------------------------------- Status pill */
+
+.el-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--el-space-1);
+  padding: 0.1rem var(--el-space-2);
+  border: 1px solid;
+  border-radius: 999px;
+  font-size: var(--el-text-2xs);
+  font-weight: 650;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.el-pill--neutral {
+  background: var(--el-paper-sunken);
+  border-color: var(--el-rule-strong);
+  color: var(--el-ink-muted);
+}
+
+.el-pill--accent {
+  background: var(--el-accent-wash);
+  border-color: var(--el-accent);
+  color: var(--el-accent);
+}
+
+.el-pill--success {
+  background: var(--el-success-wash);
+  border-color: var(--el-success);
+  color: var(--el-success);
+}
+
+.el-pill--caution {
+  background: var(--el-caution-wash);
+  border-color: var(--el-caution);
+  color: var(--el-caution);
+}
+
+/* ------------------------------------------------------------------- Panel */
+
+.el-panel {
+  background: var(--el-paper-raised);
+  border: 1px solid var(--el-rule);
+  border-radius: var(--el-radius-lg);
+}
+
+.el-panel__header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--el-space-3);
+  padding: var(--el-space-4) var(--el-space-5);
+  border-bottom: 1px solid var(--el-rule);
+}
+
+.el-panel__body {
+  padding: var(--el-space-5);
+}
+
+/* ---------------------------------------------------------------- Wordmark */
+
+.el-wordmark {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--el-space-2);
+  font-family: var(--el-font-display);
+  font-size: var(--el-text-md);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--el-ink);
+  text-decoration: none;
+}
+
+.el-wordmark__mark {
+  flex: none;
+  color: var(--el-accent);
+}
+
+/* ---------------------------------------------------------------- Skeleton */
+
+.el-skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--el-paper-sunken) 25%,
+    var(--el-rule) 37%,
+    var(--el-paper-sunken) 63%
+  );
+  background-size: 400% 100%;
+  border-radius: var(--el-radius-sm);
+  animation: el-shimmer 1.4s ease infinite;
+}
+
+@keyframes el-shimmer {
+  0% {
+    background-position: 100% 50%;
+  }
+
+  100% {
+    background-position: 0 50%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .el-skeleton {
+    animation: none;
+    background: var(--el-paper-sunken);
+  }
+}
+
+/* ------------------------------------------------------------ Empty state */
+
+.el-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--el-space-3);
+  padding: var(--el-space-7) var(--el-space-5);
+  text-align: left;
+}
+
+.el-empty__title {
+  font-family: var(--el-font-display);
+  font-size: var(--el-text-md);
+  font-weight: 600;
+}
+
+/* ------------------------------------------------------------------ Layout */
+
+.el-shell {
+  display: grid;
+  grid-template-areas:
+    'header header'
+    'sidebar main';
+  grid-template-columns: var(--el-sidebar-width) 1fr;
+  grid-template-rows: var(--el-header-height) 1fr;
+  min-height: 100dvh;
+}
+
+.el-shell__header {
+  grid-area: header;
+  display: flex;
+  align-items: center;
+  gap: var(--el-space-4);
+  padding: 0 var(--el-space-5);
+  background: var(--el-paper-raised);
+  border-bottom: 1px solid var(--el-rule);
+}
+
+.el-shell__sidebar {
+  grid-area: sidebar;
+  padding: var(--el-space-5) var(--el-space-4);
+  background: var(--el-paper);
+  border-right: 1px solid var(--el-rule);
+  overflow-y: auto;
+}
+
+.el-shell__main {
+  grid-area: main;
+  padding: var(--el-space-6) var(--el-space-6) var(--el-space-8);
+  background: var(--el-paper);
+  overflow-y: auto;
+}
+
+.el-shell__spacer {
+  margin-left: auto;
+}
+
+/*
+ * On narrow viewports the panes stack instead of the desktop layout being
+ * squeezed: the sidebar becomes a horizontal strip above the content.
+ */
+@media (width <= 52rem) {
+  .el-shell {
+    grid-template-areas:
+      'header'
+      'sidebar'
+      'main';
+    grid-template-columns: 1fr;
+    grid-template-rows: var(--el-header-height) auto 1fr;
+  }
+
+  .el-shell__sidebar {
+    border-right: none;
+    border-bottom: 1px solid var(--el-rule);
+    padding: var(--el-space-3) var(--el-space-4);
+  }
+
+  .el-shell__main {
+    padding: var(--el-space-5) var(--el-space-4) var(--el-space-7);
+  }
+}
+
+/* --------------------------------------------------------------- Nav list */
+
+.el-nav {
+  display: flex;
+  flex-direction: column;
+  gap: var(--el-space-1);
+  list-style: none;
+  padding: 0;
+}
+
+.el-nav__link {
+  display: flex;
+  align-items: center;
+  gap: var(--el-space-3);
+  min-height: var(--el-target-min);
+  padding: 0 var(--el-space-3);
+  border-radius: var(--el-radius);
+  color: var(--el-ink);
+  font-size: var(--el-text-base);
+  text-decoration: none;
+}
+
+.el-nav__link:hover {
+  background: var(--el-paper-sunken);
+  color: var(--el-ink);
+}
+
+/* The current page is marked with a weight change and a rule as well as colour. */
+.el-nav__link[aria-current='page'] {
+  background: var(--el-accent-wash);
+  box-shadow: inset 2px 0 0 var(--el-accent);
+  color: var(--el-accent);
+  font-weight: 650;
+}
+
+@media (width <= 52rem) {
+  .el-nav {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+}
+
+/* -------------------------------------------------------------- Auth pages */
+
+.el-gate {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100dvh;
+  padding: var(--el-space-5);
+  background: var(--el-paper-sunken);
+}
+
+.el-gate__card {
+  width: 100%;
+  max-width: 30rem;
+  padding: var(--el-space-6);
+  background: var(--el-paper-raised);
+  border: 1px solid var(--el-rule);
+  border-radius: var(--el-radius-lg);
+  box-shadow: var(--el-shadow);
+}
+
+.el-gate__lede {
+  margin-top: var(--el-space-2);
+  color: var(--el-ink-muted);
+  font-size: var(--el-text-sm);
+}
+
+.el-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--el-space-4);
+  margin-top: var(--el-space-5);
+}
+
+/* ------------------------------------------------------------------- Table */
+
+.el-table-wrap {
+  /* Wide content scrolls inside its own container so the page body never gains
+     a horizontal scrollbar. */
+  overflow-x: auto;
+}
+
+.el-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--el-text-sm);
+}
+
+.el-table th,
+.el-table td {
+  padding: var(--el-space-3) var(--el-space-4);
+  text-align: left;
+  vertical-align: middle;
+  border-bottom: 1px solid var(--el-rule);
+}
+
+.el-table th {
+  font-size: var(--el-text-2xs);
+  font-weight: 650;
+  letter-spacing: var(--el-tracking-caps);
+  text-transform: uppercase;
+  color: var(--el-ink-muted);
+  white-space: nowrap;
+}
+
+.el-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+/* ------------------------------------------------------- Connection banner */
+
+.el-reconnect {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--el-space-2);
+  padding: var(--el-space-2) var(--el-space-4);
+  background: var(--el-caution-wash);
+  border-bottom: 1px solid var(--el-caution);
+  color: var(--el-ink);
+  font-size: var(--el-text-sm);
+  font-weight: 550;
+}
+
+/* -------------------------------------------------------------- Page header */
+
+.el-page-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--el-space-4);
+  margin-bottom: var(--el-space-6);
+  padding-bottom: var(--el-space-4);
+  border-bottom: 1px solid var(--el-rule);
+}
+
+.el-page-header__lede {
+  margin-top: var(--el-space-2);
+  max-width: var(--el-measure);
+  color: var(--el-ink-muted);
+  font-size: var(--el-text-sm);
+}
+
+/* ------------------------------------------------------------------- Stack */
+
+.el-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--el-space-5);
+}
+
+.el-row {
+  display: flex;
+  align-items: center;
+  gap: var(--el-space-3);
+}
+
+.el-grid-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  gap: var(--el-space-4);
+}
+
+/* ------------------------------------------------------------- Theme toggle */
+
+.el-theme-toggle {
+  display: inline-flex;
+  padding: 2px;
+  background: var(--el-paper-sunken);
+  border: 1px solid var(--el-rule);
+  border-radius: var(--el-radius);
+}
+
+.el-theme-toggle__option {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 2rem;
+  min-height: 2rem;
+  border-radius: var(--el-radius-sm);
+  color: var(--el-ink-muted);
+}
+
+.el-theme-toggle__option[aria-pressed='true'] {
+  background: var(--el-paper-raised);
+  border: 1px solid var(--el-rule-strong);
+  color: var(--el-ink);
+}

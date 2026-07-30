@@ -7,7 +7,7 @@
 use std::fmt;
 
 use async_trait::async_trait;
-use elrond_domain::{DisplayName, EmailAddress, Role, SessionId, User, UserId};
+use elrond_domain::{Role, SessionId, User, UserId, Username};
 use thiserror::Error;
 use time::{Duration, OffsetDateTime};
 
@@ -159,10 +159,8 @@ pub struct Credentialed {
 pub struct NewUser {
     /// Stable identifier.
     pub id: UserId,
-    /// Normalized login address.
-    pub email: EmailAddress,
-    /// Name shown in the interface.
-    pub display_name: DisplayName,
+    /// Normalized login name.
+    pub username: Username,
     /// Authority level.
     pub role: Role,
     /// Already-hashed password.
@@ -177,10 +175,10 @@ pub trait UserRepository: Send + Sync + 'static {
     /// Counts accounts, used to detect an uninitialized instance.
     async fn count(&self) -> Result<u64, RepositoryError>;
 
-    /// Looks up an account and its credential by login address.
-    async fn find_credentialed_by_email(
+    /// Looks up an account and its credential by login name.
+    async fn find_credentialed_by_username(
         &self,
-        email: &EmailAddress,
+        username: &Username,
     ) -> Result<Option<Credentialed>, RepositoryError>;
 
     /// Looks up an account by identifier.

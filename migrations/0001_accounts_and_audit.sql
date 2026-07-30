@@ -13,10 +13,12 @@
 --     the mapping layer surfaces as a constraint violation rather than as
 --     unreadable data.
 
+-- Authentication is a username and a password. Elrond stores no email address
+-- and no other contact detail, so there is nothing here to verify, nothing to
+-- leak, and no mail transport in the deployment.
 CREATE TABLE users (
     id            BLOB    PRIMARY KEY NOT NULL,
-    email         TEXT    NOT NULL,
-    display_name  TEXT    NOT NULL,
+    username      TEXT    NOT NULL,
     role          TEXT    NOT NULL CHECK (role IN ('viewer', 'reviewer', 'editor', 'admin')),
     password_hash TEXT    NOT NULL,
     is_active     INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
@@ -24,9 +26,9 @@ CREATE TABLE users (
     updated_at    TEXT    NOT NULL
 ) STRICT;
 
--- Addresses are normalized to lowercase before they reach the database, so a
+-- Usernames are normalized to lowercase before they reach the database, so a
 -- plain unique index is enough to prevent case-variant duplicate accounts.
-CREATE UNIQUE INDEX users_email_key ON users (email);
+CREATE UNIQUE INDEX users_username_key ON users (username);
 
 CREATE TABLE sessions (
     id                BLOB PRIMARY KEY NOT NULL,

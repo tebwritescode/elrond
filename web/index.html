@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Elrond</title>
+    <meta
+      name="description"
+      content="Self-hosted document library for immutable originals, controlled PDF versions, and reproducible professional binders."
+    />
+    <!-- Nothing here is public; keep it out of search indexes. -->
+    <meta name="robots" content="noindex, nofollow" />
+    <!--
+      Declares support for both themes so the browser paints form controls and
+      scrollbars correctly before any CSS has been parsed, which avoids a white
+      flash on a dark-themed device.
+    -->
+    <meta name="color-scheme" content="light dark" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <noscript>
+      <p style="font-family: system-ui, sans-serif; margin: 3rem auto; max-width: 34rem">
+        Elrond needs JavaScript to render documents in the browser. The API remains available at
+        <code>/api/v1</code>.
+      </p>
+    </noscript>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

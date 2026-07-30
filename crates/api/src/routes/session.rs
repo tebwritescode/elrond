@@ -24,10 +24,8 @@ use crate::state::AppState;
 pub struct UserView {
     /// Identifier as a string, since JSON has no UUID type.
     pub id: String,
-    /// Login address.
-    pub email: String,
-    /// Name shown in the interface.
-    pub display_name: String,
+    /// Login name, also what the interface displays.
+    pub username: String,
     /// Authority level.
     pub role: Role,
     /// Whether the account may sign in.
@@ -40,8 +38,7 @@ impl From<&User> for UserView {
     fn from(user: &User) -> Self {
         Self {
             id: user.id.to_string(),
-            email: user.email.to_string(),
-            display_name: user.display_name.to_string(),
+            username: user.username.to_string(),
             role: user.role,
             is_active: user.is_active,
             created_at: user
@@ -83,10 +80,8 @@ pub struct SessionCreated {
 /// Body of `POST /api/v1/setup`.
 #[derive(Debug, Deserialize)]
 pub struct SetupRequest {
-    /// Login address for the first administrator.
-    pub email: String,
-    /// Display name for the first administrator.
-    pub display_name: String,
+    /// Login name for the first administrator.
+    pub username: String,
     /// Password, validated against the domain policy then hashed.
     pub password: String,
 }
@@ -94,8 +89,8 @@ pub struct SetupRequest {
 /// Body of `POST /api/v1/session`.
 #[derive(Debug, Deserialize)]
 pub struct SignInRequest {
-    /// Login address.
-    pub email: String,
+    /// Login name.
+    pub username: String,
     /// Password.
     pub password: String,
 }
@@ -153,8 +148,7 @@ pub async fn complete_setup(
     let established = state
         .auth
         .complete_first_run_setup(FirstRunSetupInput {
-            email: body.email,
-            display_name: body.display_name,
+            username: body.username,
             password: body.password,
         })
         .await?;
@@ -176,7 +170,7 @@ pub async fn sign_in(
     let established = state
         .auth
         .sign_in(SignInInput {
-            email: body.email,
+            username: body.username,
             password: body.password,
         })
         .await?;

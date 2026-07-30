@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use elrond_domain::{EmailAddress, SessionId, User, UserId};
+use elrond_domain::{SessionId, User, UserId, Username};
 use time::{Duration, OffsetDateTime};
 
 use crate::auth::AuthService;
@@ -80,16 +80,16 @@ impl UserRepository for InMemoryUserRepository {
         Ok(self.rows.lock().expect("user lock").len() as u64)
     }
 
-    async fn find_credentialed_by_email(
+    async fn find_credentialed_by_username(
         &self,
-        email: &EmailAddress,
+        username: &Username,
     ) -> Result<Option<Credentialed>, RepositoryError> {
         Ok(self
             .rows
             .lock()
             .expect("user lock")
             .iter()
-            .find(|row| row.user.email == *email)
+            .find(|row| row.user.username == *username)
             .cloned())
     }
 
@@ -105,16 +105,18 @@ impl UserRepository for InMemoryUserRepository {
 
     async fn insert(&self, new_user: NewUser) -> Result<User, RepositoryError> {
         let mut rows = self.rows.lock().expect("user lock");
-        if rows.iter().any(|row| row.user.email == new_user.email) {
+        if rows
+            .iter()
+            .any(|row| row.user.username == new_user.username)
+        {
             return Err(RepositoryError::UniqueViolation {
                 resource: "user",
-                field: "email",
+                field: "username",
             });
         }
         let user = User {
             id: new_user.id,
-            email: new_user.email,
-            display_name: new_user.display_name,
+            username: new_user.username,
             role: new_user.role,
             is_active: true,
             created_at: new_user.created_at,

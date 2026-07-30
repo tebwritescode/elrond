@@ -1,0 +1,52 @@
+# Elrond alongside an independently deployed Stirling-PDF.
+#
+# Ports are chosen so this stack can run next to another Elrond implementation on
+# the same host without a collision.
+
+services:
+  elrond:
+    image: elrond-alt:local
+    build:
+      context: .
+    container_name: elrond-alt
+    restart: unless-stopped
+    ports:
+      - '3100:3100'
+    environment:
+      # Set this to the URL users actually reach Elrond on. It is the origin the
+      # CSRF check accepts.
+      ELROND_PUBLIC_URL: http://localhost:3100
+      # Turn on once TLS terminates in front of Elrond. A Secure cookie is
+      # silently discarded over plain HTTP, which looks like a broken sign-in.
+      ELROND_SECURE_COOKIES: 'false'
+      # Only enable behind a reverse proxy that always overwrites the header.
+      # Otherwise it is attacker-controlled and defeats rate limiting.
+      ELROND_TRUST_FORWARDED_FOR: 'false'
+      STIRLING_URL: http://stirling:8080
+      # Supply via a secret or an env file; never commit a value.
+      # STIRLING_API_KEY: ''
+      RUST_LOG: info
+    volumes:
+      - elrond-data:/data
+    depends_on:
+      stirling:
+        condition: service_started
+
+  # Stirling-PDF is a separate deployment that Elrond talks to over HTTP. Its
+  # responses are treated as untrusted and validated before use.
+  stirling:
+    image: docker.io/stirlingtools/stirling-pdf:latest
+    container_name: elrond-alt-stirling
+    restart: unless-stopped
+    # Not published on the host: only Elrond needs to reach it.
+    expose:
+      - '8080'
+    environment:
+      DOCKER_ENABLE_SECURITY: 'false'
+      LANGS: en_GB
+    volumes:
+      - stirling-config:/configs
+
+volumes:
+  elrond-data:
+  stirling-config:

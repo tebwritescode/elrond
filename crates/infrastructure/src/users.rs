@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use elrond_application::ports::{
     Credentialed, NewUser, PasswordHash, RepositoryError, UserRepository,
 };
-use elrond_domain::{DisplayName, EmailAddress, Role, User, UserId};
+use elrond_domain::{Role, User, UserId, Username};
 use sqlx::sqlite::SqliteRow;
 use sqlx::{Pool, Row, Sqlite};
 use time::OffsetDateTime;
@@ -14,8 +14,7 @@ use crate::db::{Database, classify};
 
 /// Columns selected whenever a full account is read, kept in one place so every
 /// query and the row mapper cannot drift apart.
-const USER_COLUMNS: &str =
-    "id, email, display_name, role, is_active, created_at, updated_at, password_hash";
+const USER_COLUMNS: &str = "id, username, role, is_active, created_at, updated_at, password_hash";
 
 /// Accounts stored in SQLite.
 #[derive(Debug, Clone)]
@@ -44,14 +43,14 @@ impl UserRepository for SqliteUserRepository {
         Ok(count.max(0).cast_unsigned())
     }
 
-    async fn find_credentialed_by_email(
+    async fn find_credentialed_by_username(
         &self,
-        email: &EmailAddress,
+        username: &Username,
     ) -> Result<Option<Credentialed>, RepositoryError> {
         let row = sqlx::query(&format!(
-            "SELECT {USER_COLUMNS} FROM users WHERE email = ?1"
+            "SELECT {USER_COLUMNS} FROM users WHERE username = ?1"
         ))
-        .bind(email.as_str())
+        .bind(username.as_str())
         .fetch_optional(&self.pool)
         .await
         .map_err(RepositoryError::backend)?;
@@ -73,23 +72,21 @@ impl UserRepository for SqliteUserRepository {
 
     async fn insert(&self, new_user: NewUser) -> Result<User, RepositoryError> {
         sqlx::query(
-            "INSERT INTO users (id, email, display_name, role, password_hash, is_active, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, 1, ?6, ?6)",
+            "INSERT INTO users (id, username, role, password_hash, is_active, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, 1, ?5, ?5)",
         )
         .bind(new_user.id.into_uuid())
-        .bind(new_user.email.as_str())
-        .bind(new_user.display_name.as_str())
+        .bind(new_user.username.as_str())
         .bind(new_user.role.as_str())
         .bind(new_user.password_hash.expose())
         .bind(new_user.created_at)
         .execute(&self.pool)
         .await
-        .map_err(|error| classify(error, "user", "email"))?;
+        .map_err(|error| classify(error, "user", "username"))?;
 
         Ok(User {
             id: new_user.id,
-            email: new_user.email,
-            display_name: new_user.display_name,
+            username: new_user.username,
             role: new_user.role,
             is_active: true,
             created_at: new_user.created_at,
@@ -128,10 +125,7 @@ struct CorruptUserRow {
 /// Rebuilds an account and its credential from a row.
 fn map_credentialed(row: &SqliteRow) -> Result<Credentialed, RepositoryError> {
     let id: Uuid = row.try_get("id").map_err(RepositoryError::backend)?;
-    let email: String = row.try_get("email").map_err(RepositoryError::backend)?;
-    let display_name: String = row
-        .try_get("display_name")
-        .map_err(RepositoryError::backend)?;
+    let username: String = row.try_get("username").map_err(RepositoryError::backend)?;
     let role: String = row.try_get("role").map_err(RepositoryError::backend)?;
     let is_active: bool = row.try_get("is_active").map_err(RepositoryError::backend)?;
     let created_at: OffsetDateTime = row
@@ -147,16 +141,10 @@ fn map_credentialed(row: &SqliteRow) -> Result<Credentialed, RepositoryError> {
     // Values are re-validated on the way out. The CHECK constraints and the
     // application layer should make this unreachable, but a hand-edited database
     // must fail loudly rather than produce a User that breaks domain invariants.
-    let email = EmailAddress::parse(&email).map_err(|_| {
+    let username = Username::parse(&username).map_err(|_| {
         RepositoryError::backend(CorruptUserRow {
-            column: "email",
-            reason: "not a valid address",
-        })
-    })?;
-    let display_name = DisplayName::parse(&display_name).map_err(|_| {
-        RepositoryError::backend(CorruptUserRow {
-            column: "display_name",
-            reason: "empty or contains control characters",
+            column: "username",
+            reason: "not a valid username",
         })
     })?;
     let role: Role = role.parse().map_err(|_| {
@@ -169,8 +157,7 @@ fn map_credentialed(row: &SqliteRow) -> Result<Credentialed, RepositoryError> {
     Ok(Credentialed {
         user: User {
             id: UserId::from_uuid(id),
-            email,
-            display_name,
+            username,
             role,
             is_active,
             created_at,
@@ -190,11 +177,10 @@ mod tests {
         (database, repository)
     }
 
-    fn sample(email: &str, role: Role) -> NewUser {
+    fn sample(username: &str, role: Role) -> NewUser {
         NewUser {
             id: UserId::new(),
-            email: EmailAddress::parse(email).expect("valid address"),
-            display_name: DisplayName::parse("Records Team").expect("valid name"),
+            username: Username::parse(username).expect("valid username"),
             role,
             password_hash: PasswordHash::new("$argon2id$placeholder".to_owned()),
             created_at: OffsetDateTime::from_unix_timestamp(1_767_225_600).expect("valid time"),
@@ -211,7 +197,7 @@ mod tests {
     async fn an_inserted_account_round_trips() {
         let (_db, users) = repository().await;
         let inserted = users
-            .insert(sample("admin@example.org", Role::Admin))
+            .insert(sample("records.admin", Role::Admin))
             .await
             .expect("insert succeeds");
 
@@ -225,15 +211,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn lookup_by_email_returns_the_credential() {
+    async fn lookup_by_username_returns_the_credential() {
         let (_db, users) = repository().await;
         let inserted = users
-            .insert(sample("editor@example.org", Role::Editor))
+            .insert(sample("editor", Role::Editor))
             .await
             .expect("insert succeeds");
 
         let found = users
-            .find_credentialed_by_email(&inserted.email)
+            .find_credentialed_by_username(&inserted.username)
             .await
             .expect("query succeeds")
             .expect("account exists");
@@ -244,10 +230,10 @@ mod tests {
     #[tokio::test]
     async fn a_missing_account_is_none_not_an_error() {
         let (_db, users) = repository().await;
-        let email = EmailAddress::parse("nobody@example.org").expect("valid");
+        let username = Username::parse("nobody").expect("valid");
         assert!(
             users
-                .find_credentialed_by_email(&email)
+                .find_credentialed_by_username(&username)
                 .await
                 .expect("query succeeds")
                 .is_none()
@@ -262,15 +248,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_duplicate_email_is_a_unique_violation_not_a_backend_error() {
+    async fn a_duplicate_username_is_a_unique_violation_not_a_backend_error() {
         let (_db, users) = repository().await;
         users
-            .insert(sample("admin@example.org", Role::Admin))
+            .insert(sample("records.admin", Role::Admin))
             .await
             .expect("first insert succeeds");
 
         let error = users
-            .insert(sample("admin@example.org", Role::Editor))
+            .insert(sample("records.admin", Role::Editor))
             .await
             .expect_err("second insert is refused");
         assert!(
@@ -278,7 +264,7 @@ mod tests {
                 error,
                 RepositoryError::UniqueViolation {
                     resource: "user",
-                    field: "email"
+                    field: "username"
                 }
             ),
             "expected a unique violation, got {error:?}"
@@ -286,11 +272,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_case_variant_username_cannot_create_a_second_account() {
+        let (_db, users) = repository().await;
+        users
+            .insert(sample("archivist", Role::Editor))
+            .await
+            .expect("first insert succeeds");
+
+        // Normalization happens in the domain, so both spellings hit the same
+        // unique index rather than producing two look-alike accounts.
+        let error = users
+            .insert(sample("ARCHIVIST", Role::Editor))
+            .await
+            .expect_err("refused");
+        assert!(matches!(error, RepositoryError::UniqueViolation { .. }));
+    }
+
+    #[tokio::test]
     async fn every_role_survives_a_storage_round_trip() {
         let (_db, users) = repository().await;
         for (index, role) in Role::ALL.into_iter().enumerate() {
             let inserted = users
-                .insert(sample(&format!("user{index}@example.org"), role))
+                .insert(sample(&format!("user{index}"), role))
                 .await
                 .expect("insert succeeds");
             let found = users
@@ -309,7 +312,7 @@ mod tests {
         for index in 0..5 {
             expected.push(
                 users
-                    .insert(sample(&format!("user{index}@example.org"), Role::Viewer))
+                    .insert(sample(&format!("user{index}"), Role::Viewer))
                     .await
                     .expect("insert succeeds")
                     .id,
@@ -329,7 +332,7 @@ mod tests {
     #[tokio::test]
     async fn timestamps_and_flags_persist_exactly() {
         let (_db, users) = repository().await;
-        let new_user = sample("archivist@example.org", Role::Reviewer);
+        let new_user = sample("archivist", Role::Reviewer);
         let created_at = new_user.created_at;
         let inserted = users.insert(new_user).await.expect("insert succeeds");
 
@@ -347,12 +350,12 @@ mod tests {
     async fn a_hand_corrupted_row_fails_loudly() {
         let (db, users) = repository().await;
         let inserted = users
-            .insert(sample("admin@example.org", Role::Admin))
+            .insert(sample("records.admin", Role::Admin))
             .await
             .expect("insert succeeds");
 
         // Bypass the application layer the way a manual database edit would.
-        sqlx::query("UPDATE users SET display_name = '' WHERE id = ?1")
+        sqlx::query("UPDATE users SET username = 'not a username' WHERE id = ?1")
             .bind(inserted.id.into_uuid())
             .execute(db.pool())
             .await
@@ -361,7 +364,7 @@ mod tests {
         let error = users
             .find_by_id(inserted.id)
             .await
-            .expect_err("mapping must reject an invalid display name");
+            .expect_err("mapping must reject an invalid username");
         assert!(matches!(error, RepositoryError::Backend(_)));
     }
 }

@@ -130,7 +130,7 @@ impl ApiError {
     /// The offending field, when there is one.
     fn field(&self) -> Option<&'static str> {
         match self {
-            Self::Application(ApplicationError::Domain(error)) => error.field(),
+            Self::Application(error) => error.field(),
             _ => None,
         }
     }

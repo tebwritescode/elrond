@@ -1,4 +1,8 @@
 //! Local accounts, roles, and credential policy.
+//!
+//! Authentication is deliberately minimal: a username and a password. There is no
+//! email address anywhere in the model, so Elrond stores no contact details, has
+//! nothing to verify, and needs no mail transport to be useful.
 
 use std::fmt;
 use std::str::FromStr;
@@ -9,10 +13,10 @@ use time::OffsetDateTime;
 use crate::error::DomainError;
 use crate::id::UserId;
 
-/// Maximum stored length of a display name.
-const DISPLAY_NAME_MAX: usize = 120;
-/// Maximum stored length of an email address, matching the SMTP path limit.
-const EMAIL_MAX: usize = 254;
+/// Shortest accepted username.
+const USERNAME_MIN: usize = 3;
+/// Longest accepted username.
+const USERNAME_MAX: usize = 32;
 
 /// What an account is allowed to do.
 ///
@@ -89,135 +93,79 @@ impl FromStr for Role {
     }
 }
 
-/// A validated, normalized email address.
+/// A validated, normalized login name.
 ///
-/// Validation is deliberately structural rather than exhaustive: the goal is to
-/// reject obvious mistakes and guarantee a canonical lookup key, not to
-/// reimplement RFC 5322.
+/// Normalizing to lowercase is what makes the uniqueness guarantee real: without
+/// it, `Archivist` and `archivist` would be two accounts that look identical in
+/// every list and audit record.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
 #[serde(transparent)]
-pub struct EmailAddress(String);
+pub struct Username(String);
 
-impl EmailAddress {
-    /// Validates and normalizes an address.
+impl Username {
+    /// Characters permitted inside a username, besides letters and digits.
+    const SEPARATORS: [char; 3] = ['.', '_', '-'];
+
+    /// Validates and normalizes a username.
     pub fn parse(raw: &str) -> Result<Self, DomainError> {
         let trimmed = raw.trim();
         if trimmed.is_empty() {
-            return Err(DomainError::Required { field: "email" });
+            return Err(DomainError::Required { field: "username" });
         }
-        if trimmed.chars().count() > EMAIL_MAX {
+
+        let normalized = trimmed.to_lowercase();
+        let length = normalized.chars().count();
+        if length < USERNAME_MIN {
+            return Err(DomainError::TooShort {
+                field: "username",
+                min: USERNAME_MIN,
+            });
+        }
+        if length > USERNAME_MAX {
             return Err(DomainError::TooLong {
-                field: "email",
-                max: EMAIL_MAX,
-            });
-        }
-        if trimmed.chars().any(char::is_whitespace) {
-            return Err(DomainError::Invalid {
-                field: "email",
-                reason: "contains_whitespace",
+                field: "username",
+                max: USERNAME_MAX,
             });
         }
 
-        let mut parts = trimmed.split('@');
-        let local = parts.next().unwrap_or_default();
-        let domain = parts.next().ok_or(DomainError::Invalid {
-            field: "email",
-            reason: "missing_at_sign",
-        })?;
-        if parts.next().is_some() {
+        // ASCII only. A username is an identifier, and allowing Unicode would
+        // admit homoglyph pairs that render identically but compare unequal,
+        // which is an impersonation risk in an audit trail.
+        if !normalized
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || Self::SEPARATORS.contains(&c))
+        {
             return Err(DomainError::Invalid {
-                field: "email",
-                reason: "multiple_at_signs",
-            });
-        }
-        if local.is_empty() {
-            return Err(DomainError::Invalid {
-                field: "email",
-                reason: "empty_local_part",
-            });
-        }
-        if domain.is_empty() || !domain.contains('.') {
-            return Err(DomainError::Invalid {
-                field: "email",
-                reason: "domain_must_contain_a_dot",
-            });
-        }
-        if domain.starts_with('.') || domain.ends_with('.') || domain.contains("..") {
-            return Err(DomainError::Invalid {
-                field: "email",
-                reason: "malformed_domain",
+                field: "username",
+                reason: "letters_digits_dot_underscore_hyphen_only",
             });
         }
 
-        // Only the domain is case-insensitive per spec, but Elrond lowercases the
-        // whole address so a single account cannot be created twice with
-        // different casing.
-        Ok(Self(trimmed.to_lowercase()))
+        let first = normalized.chars().next().unwrap_or_default();
+        let last = normalized.chars().last().unwrap_or_default();
+        if !first.is_ascii_alphanumeric() || !last.is_ascii_alphanumeric() {
+            return Err(DomainError::Invalid {
+                field: "username",
+                reason: "must_start_and_end_with_a_letter_or_digit",
+            });
+        }
+
+        Ok(Self(normalized))
     }
 
-    /// Borrows the normalized address.
+    /// Borrows the normalized username.
     pub fn as_str(&self) -> &str {
         &self.0
     }
 }
 
-impl fmt::Display for EmailAddress {
+impl fmt::Display for Username {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.0)
     }
 }
 
-impl<'de> Deserialize<'de> for EmailAddress {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let raw = String::deserialize(deserializer)?;
-        Self::parse(&raw).map_err(serde::de::Error::custom)
-    }
-}
-
-/// A validated human-readable account name.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
-#[serde(transparent)]
-pub struct DisplayName(String);
-
-impl DisplayName {
-    /// Validates and normalizes a display name.
-    pub fn parse(raw: &str) -> Result<Self, DomainError> {
-        let trimmed = raw.trim();
-        if trimmed.is_empty() {
-            return Err(DomainError::Required {
-                field: "display_name",
-            });
-        }
-        if trimmed.chars().count() > DISPLAY_NAME_MAX {
-            return Err(DomainError::TooLong {
-                field: "display_name",
-                max: DISPLAY_NAME_MAX,
-            });
-        }
-        // Control characters would let a name corrupt logs, CSV exports, and
-        // generated binder covers.
-        if trimmed.chars().any(char::is_control) {
-            return Err(DomainError::Invalid {
-                field: "display_name",
-                reason: "contains_control_characters",
-            });
-        }
-        Ok(Self(trimmed.to_owned()))
-    }
-
-    /// Borrows the name.
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl fmt::Display for DisplayName {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
-impl<'de> Deserialize<'de> for DisplayName {
+impl<'de> Deserialize<'de> for Username {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let raw = String::deserialize(deserializer)?;
         Self::parse(&raw).map_err(serde::de::Error::custom)
@@ -267,10 +215,8 @@ impl PasswordPolicy {
 pub struct User {
     /// Stable identifier.
     pub id: UserId,
-    /// Normalized login address.
-    pub email: EmailAddress,
-    /// Name shown in the interface and audit trail.
-    pub display_name: DisplayName,
+    /// Normalized login name, also what the interface displays.
+    pub username: Username,
     /// Authority level.
     pub role: Role,
     /// Deactivated accounts keep their audit history but cannot authenticate.
@@ -322,50 +268,55 @@ mod tests {
     }
 
     #[test]
-    fn email_is_lowercased_and_trimmed() {
-        let email = EmailAddress::parse("  Editor@Example.ORG  ").expect("valid");
-        assert_eq!(email.as_str(), "editor@example.org");
+    fn usernames_are_trimmed_and_lowercased() {
+        let username = Username::parse("  Records.Admin  ").expect("valid");
+        assert_eq!(username.as_str(), "records.admin");
     }
 
     #[test]
-    fn malformed_emails_are_rejected() {
+    fn case_variants_normalize_to_the_same_account() {
+        assert_eq!(
+            Username::parse("Archivist").expect("valid"),
+            Username::parse("archivist").expect("valid")
+        );
+    }
+
+    #[test]
+    fn separators_are_allowed_inside_a_username() {
+        for candidate in ["a_b", "a.b", "a-b", "user.name_1", "abc"] {
+            assert!(
+                Username::parse(candidate).is_ok(),
+                "expected {candidate:?} to be accepted"
+            );
+        }
+    }
+
+    #[test]
+    fn malformed_usernames_are_rejected() {
         for candidate in [
-            "",
-            "   ",
-            "no-at-sign",
-            "@example.org",
-            "user@",
-            "user@localhost",
-            "user@.example.org",
-            "user@example.org.",
-            "user@exa..mple.org",
-            "two@at@example.org",
-            "spaced user@example.org",
+            "",          // empty
+            "   ",       // whitespace only
+            "ab",        // too short
+            "_leading",  // starts with a separator
+            "trailing-", // ends with a separator
+            "has space", // whitespace inside
+            "user@host", // an address, not a username
+            "user name", // whitespace inside
+            "tab\tname", // control character
+            "аdmin",     // Cyrillic 'а', a homoglyph for ASCII 'a'
         ] {
             assert!(
-                EmailAddress::parse(candidate).is_err(),
+                Username::parse(candidate).is_err(),
                 "expected rejection for {candidate:?}"
             );
         }
     }
 
     #[test]
-    fn overlong_email_is_rejected() {
-        let candidate = format!("{}@example.org", "a".repeat(EMAIL_MAX));
-        let error = EmailAddress::parse(&candidate).expect_err("too long");
+    fn overlong_username_is_rejected() {
+        let error = Username::parse(&"a".repeat(USERNAME_MAX + 1)).expect_err("too long");
         assert_eq!(error.code(), "field_too_long");
-    }
-
-    #[test]
-    fn display_name_rejects_blank_and_control_characters() {
-        assert!(DisplayName::parse("   ").is_err());
-        assert!(DisplayName::parse("Records\u{0007}Team").is_err());
-        assert_eq!(
-            DisplayName::parse("  Records Team  ")
-                .expect("valid")
-                .as_str(),
-            "Records Team"
-        );
+        assert!(Username::parse(&"a".repeat(USERNAME_MAX)).is_ok());
     }
 
     #[test]
@@ -381,8 +332,7 @@ mod tests {
     fn deactivated_accounts_cannot_authenticate() {
         let user = User {
             id: UserId::new(),
-            email: EmailAddress::parse("archivist@example.org").expect("valid"),
-            display_name: DisplayName::parse("Archivist").expect("valid"),
+            username: Username::parse("archivist").expect("valid"),
             role: Role::Editor,
             is_active: false,
             created_at: OffsetDateTime::UNIX_EPOCH,

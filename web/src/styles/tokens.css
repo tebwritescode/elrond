@@ -1,0 +1,223 @@
+/*
+ * Elrond design tokens.
+ *
+ * The palette is warm and paper-like rather than the usual cool grey dashboard.
+ * Every foreground/background pair below was checked against WCAG 2.2 AA: body
+ * and muted text clear 4.5:1, and large text clears 3:1, in both themes.
+ *
+ * Themes resolve in two ways. `prefers-color-scheme` is the default signal, and
+ * an explicit `data-theme` on the root element overrides it in either direction
+ * so the in-app toggle always wins.
+ */
+
+:root {
+  /* ---- Surfaces ---- */
+  --el-paper: #faf7f2;
+  --el-paper-sunken: #f2ece3;
+  --el-paper-raised: #fffdfa;
+  --el-paper-overlay: rgb(35 32 29 / 45%);
+
+  /* ---- Ink ---- */
+  --el-ink: #23201d;
+  --el-ink-muted: #6b6259;
+  --el-ink-inverse: #fffdfa;
+
+  /* ---- Lines ---- */
+  --el-rule: #e2dad0;
+  --el-rule-strong: #cfc3b5;
+
+  /* ---- Accent: burnt sienna, used sparingly ---- */
+  --el-accent: #8a4b2a;
+  --el-accent-hover: #743d21;
+  --el-accent-wash: #f4e7de;
+
+  /* ---- Status. Never the only signal; always paired with an icon and text ---- */
+  --el-danger: #9b2c1c;
+  --el-danger-wash: #f9e4e0;
+  --el-success: #2f6b3c;
+  --el-success-wash: #e3f0e5;
+  --el-caution: #7a5310;
+  --el-caution-wash: #f8eeda;
+  --el-info: #2b556e;
+  --el-info-wash: #e3eef4;
+
+  /* ---- Focus ---- */
+  --el-focus: #1d4ed8;
+  --el-focus-contrast: #fffdfa;
+
+  /* ---- Typography ---- */
+  /*
+   * Self-hosted-only by design: the Content-Security-Policy forbids third-party
+   * font hosts, and a stack of widely available faces avoids shipping font files
+   * for a first release. The serif carries the editorial voice; the sans keeps
+   * dense tool surfaces legible at small sizes.
+   */
+  --el-font-display:
+    'Iowan Old Style', 'Palatino Linotype', Palatino, 'Book Antiqua', Georgia, serif;
+  --el-font-ui:
+    system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --el-font-mono: ui-monospace, 'Cascadia Code', 'Source Code Pro', Menlo, Consolas, monospace;
+
+  --el-text-2xs: 0.6875rem;
+  --el-text-xs: 0.75rem;
+  --el-text-sm: 0.8125rem;
+  --el-text-base: 0.9375rem;
+  --el-text-md: 1.0625rem;
+  --el-text-lg: 1.375rem;
+  --el-text-xl: 1.875rem;
+  --el-text-2xl: 2.5rem;
+
+  --el-leading-tight: 1.2;
+  --el-leading-normal: 1.55;
+
+  --el-tracking-caps: 0.11em;
+
+  /* ---- Space, on a 4px grid ---- */
+  --el-space-1: 0.25rem;
+  --el-space-2: 0.5rem;
+  --el-space-3: 0.75rem;
+  --el-space-4: 1rem;
+  --el-space-5: 1.5rem;
+  --el-space-6: 2rem;
+  --el-space-7: 3rem;
+  --el-space-8: 4rem;
+
+  /* ---- Shape ---- */
+  --el-radius-sm: 0.1875rem;
+  --el-radius: 0.3125rem;
+  --el-radius-lg: 0.5rem;
+
+  /* ---- Elevation. Restrained: this is paper, not glass ---- */
+  --el-shadow-sm: 0 1px 2px rgb(35 32 29 / 6%);
+  --el-shadow: 0 2px 8px rgb(35 32 29 / 8%), 0 1px 2px rgb(35 32 29 / 5%);
+  --el-shadow-lg: 0 12px 32px rgb(35 32 29 / 14%);
+
+  /* ---- Motion. Short enough never to sit between a user and their work ---- */
+  --el-duration-fast: 90ms;
+  --el-duration: 150ms;
+  --el-ease: cubic-bezier(0.2, 0, 0.3, 1);
+
+  /* ---- Layout ---- */
+  --el-sidebar-width: 17rem;
+  --el-header-height: 3.5rem;
+  --el-measure: 38rem;
+
+  /*
+   * Minimum interactive size. WCAG 2.2 Target Size (Minimum) requires 24px;
+   * 40px is comfortable for pointer and touch alike, and controls that must be
+   * denser use spacing exceptions rather than shrinking below the floor.
+   */
+  --el-target-min: 2.5rem;
+
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --el-paper: #191714;
+    --el-paper-sunken: #131110;
+    --el-paper-raised: #211e1a;
+    --el-paper-overlay: rgb(0 0 0 / 60%);
+
+    --el-ink: #ece6dd;
+    --el-ink-muted: #a49a8d;
+    --el-ink-inverse: #191714;
+
+    --el-rule: #322d27;
+    --el-rule-strong: #4a4239;
+
+    --el-accent: #d98b5f;
+    --el-accent-hover: #e8a07a;
+    --el-accent-wash: #2e241d;
+
+    --el-danger: #e8836f;
+    --el-danger-wash: #33201c;
+    --el-success: #7fc08d;
+    --el-success-wash: #1c2a1f;
+    --el-caution: #d9b268;
+    --el-caution-wash: #2d2517;
+    --el-info: #8dbdd8;
+    --el-info-wash: #1a252c;
+
+    --el-focus: #8ab4ff;
+    --el-focus-contrast: #191714;
+
+    --el-shadow-sm: 0 1px 2px rgb(0 0 0 / 40%);
+    --el-shadow: 0 2px 8px rgb(0 0 0 / 45%), 0 1px 2px rgb(0 0 0 / 30%);
+    --el-shadow-lg: 0 12px 32px rgb(0 0 0 / 55%);
+
+    color-scheme: dark;
+  }
+}
+
+/* An explicit choice overrides the system preference in both directions. */
+:root[data-theme='light'] {
+  --el-paper: #faf7f2;
+  --el-paper-sunken: #f2ece3;
+  --el-paper-raised: #fffdfa;
+  --el-paper-overlay: rgb(35 32 29 / 45%);
+  --el-ink: #23201d;
+  --el-ink-muted: #6b6259;
+  --el-ink-inverse: #fffdfa;
+  --el-rule: #e2dad0;
+  --el-rule-strong: #cfc3b5;
+  --el-accent: #8a4b2a;
+  --el-accent-hover: #743d21;
+  --el-accent-wash: #f4e7de;
+  --el-danger: #9b2c1c;
+  --el-danger-wash: #f9e4e0;
+  --el-success: #2f6b3c;
+  --el-success-wash: #e3f0e5;
+  --el-caution: #7a5310;
+  --el-caution-wash: #f8eeda;
+  --el-info: #2b556e;
+  --el-info-wash: #e3eef4;
+  --el-focus: #1d4ed8;
+  --el-focus-contrast: #fffdfa;
+  --el-shadow-sm: 0 1px 2px rgb(35 32 29 / 6%);
+  --el-shadow: 0 2px 8px rgb(35 32 29 / 8%), 0 1px 2px rgb(35 32 29 / 5%);
+  --el-shadow-lg: 0 12px 32px rgb(35 32 29 / 14%);
+
+  color-scheme: light;
+}
+
+:root[data-theme='dark'] {
+  --el-paper: #191714;
+  --el-paper-sunken: #131110;
+  --el-paper-raised: #211e1a;
+  --el-paper-overlay: rgb(0 0 0 / 60%);
+  --el-ink: #ece6dd;
+  --el-ink-muted: #a49a8d;
+  --el-ink-inverse: #191714;
+  --el-rule: #322d27;
+  --el-rule-strong: #4a4239;
+  --el-accent: #d98b5f;
+  --el-accent-hover: #e8a07a;
+  --el-accent-wash: #2e241d;
+  --el-danger: #e8836f;
+  --el-danger-wash: #33201c;
+  --el-success: #7fc08d;
+  --el-success-wash: #1c2a1f;
+  --el-caution: #d9b268;
+  --el-caution-wash: #2d2517;
+  --el-info: #8dbdd8;
+  --el-info-wash: #1a252c;
+  --el-focus: #8ab4ff;
+  --el-focus-contrast: #191714;
+  --el-shadow-sm: 0 1px 2px rgb(0 0 0 / 40%);
+  --el-shadow: 0 2px 8px rgb(0 0 0 / 45%), 0 1px 2px rgb(0 0 0 / 30%);
+  --el-shadow-lg: 0 12px 32px rgb(0 0 0 / 55%);
+
+  color-scheme: dark;
+}
+
+/*
+ * Windows high-contrast mode replaces the palette with system colours. Borders
+ * must stay present so component edges do not vanish.
+ */
+@media (forced-colors: active) {
+  :root {
+    --el-rule: CanvasText;
+    --el-rule-strong: CanvasText;
+  }
+}

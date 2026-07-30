@@ -1,0 +1,157 @@
+# Quality gates for Elrond.
+#
+# Lives in .github/workflows because both GitHub Actions and Gitea Actions read
+# that path, so one file serves either runner.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# Cancel superseded runs on the same ref; only the newest result matters.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # Fewer, larger units keep CI wall time down at a small cost to incremental
+  # rebuilds, which CI does not benefit from anyway.
+  CARGO_INCREMENTAL: 0
+  RUSTFLAGS: -D warnings
+
+jobs:
+  rust:
+    name: Rust
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the pinned toolchain
+        run: |
+          rustup show active-toolchain || rustup toolchain install stable
+          rustup component add rustfmt clippy
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: cargo-${{ runner.os }}-
+
+      - name: Formatting
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      # Includes the migration tests and the end-to-end HTTP tests, which run
+      # against real SQLite and real Argon2id.
+      - name: Tests
+        run: cargo test --workspace --locked
+
+      - name: Documentation builds without warnings
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --workspace --no-deps
+
+  web:
+    name: Web
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      # `ci` rather than `install`, so the lockfile is authoritative and a drifted
+      # manifest fails the build.
+      - name: Install
+        run: npm ci
+
+      - name: Types
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Formatting
+        run: npm run format:check
+
+      - name: Tests
+        run: npm run test
+
+      - name: Build
+        run: npm run build
+
+  audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
+      - name: Rust advisories
+        run: cargo audit --deny warnings
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      # High and critical only: the transitive tail of a frontend tree produces
+      # too many low-severity advisories with no available fix to gate on.
+      - name: Node advisories
+        working-directory: web
+        run: npm audit --audit-level=high
+
+  image:
+    name: Container image
+    runs-on: ubuntu-latest
+    needs: [rust, web]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      # Build on every run so a broken Dockerfile is caught in the pull request,
+      # but only tag and push from main and from version tags.
+      - name: Build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: elrond-alt:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: The image starts and reports healthy
+        run: |
+          docker run -d --name elrond-ci -p 3100:3100 elrond-alt:ci
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:3100/api/v1/health; then
+              echo "healthy"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "the container never became healthy" >&2
+          docker logs elrond-ci
+          exit 1
