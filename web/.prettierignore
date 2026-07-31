@@ -1,3 +1,7 @@
 dist/
 node_modules/
 coverage/
+
+# Playwright output. Generated, ignored by git, and not ours to format.
+test-results/
+playwright-report/

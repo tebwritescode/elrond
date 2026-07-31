@@ -55,5 +55,8 @@ export default defineConfig({
     globals: true,
     setupFiles: ['./src/test/setup.ts'],
     css: true,
+    // Unit tests only. `e2e/` is Playwright's, and its specs import a runner
+    // vitest cannot provide, so collecting them here fails the run.
+    include: ['src/**/*.{test,spec}.{ts,tsx}'],
   },
 });

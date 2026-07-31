@@ -162,9 +162,13 @@ jobs:
 
       - name: The image starts and reports healthy
         run: |
-          docker run -d --name elrond-ci -p 3100:3100 elrond-alt:ci
+          # ELROND_PUBLIC_URL sets the CSRF Origin allowlist. Without it a
+          # browser is refused on every write, which curl would not notice
+          # because curl sends no Origin header.
+          docker run -d --name elrond-ci -p 3101:3100 \
+            -e ELROND_PUBLIC_URL=http://127.0.0.1:3101 elrond-alt:ci
           for attempt in $(seq 1 30); do
-            if curl -fsS http://127.0.0.1:3100/api/v1/health; then
+            if curl -fsS http://127.0.0.1:3101/api/v1/health; then
               echo "healthy"
               exit 0
             fi
@@ -173,3 +177,38 @@ jobs:
           echo "the container never became healthy" >&2
           docker logs elrond-ci
           exit 1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install
+        working-directory: web
+        run: npm ci
+
+      - name: Install the browser
+        working-directory: web
+        run: npx playwright install --with-deps chromium
+
+      # Drives a real browser through first-run setup, categorising, uploading,
+      # and printing a binder, then asserts the structure of the PDF that comes
+      # back. Run against the image rather than a dev server, because the image
+      # is what ships.
+      - name: End-to-end
+        working-directory: web
+        env:
+          ELROND_E2E_URL: http://127.0.0.1:3101
+        run: npm run test:e2e
+
+      - name: Container logs on failure
+        if: failure()
+        run: docker logs elrond-ci
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: web/test-results
+          retention-days: 7

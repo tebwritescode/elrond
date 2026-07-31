@@ -158,8 +158,35 @@ npm run format:check
 npm run test
 ```
 
-CI runs all of the above plus a dependency audit, a container build, and a
-health check against the built image.
+### End-to-end
+
+The end-to-end suite drives a real browser through the whole promised workflow —
+first-run setup, creating categories, uploading PDFs into them, and printing a
+combined binder — then asserts the structure of the PDF that comes back: page
+count, full-page category separators, contents-page cross-references, and
+stamped page numbers.
+
+It runs against a running server rather than starting one, and the server it is
+meant to run against is the container, because the container is what ships:
+
+```bash
+docker run -d --name elrond -p 3101:3100 \
+  -e ELROND_PUBLIC_URL=http://127.0.0.1:3101 elrond-alt:local
+
+cd web
+npx playwright install chromium
+ELROND_E2E_URL=http://127.0.0.1:3101 npm run test:e2e
+```
+
+`ELROND_PUBLIC_URL` must match the address the browser uses. It sets the CSRF
+Origin allowlist, and without it every write is refused — which `curl` will not
+reveal, because `curl` sends no `Origin` header.
+
+The suite expects a library with no accounts, so start from a fresh volume each
+run.
+
+CI runs all of the above plus a dependency audit, a container build, and the
+end-to-end suite against the built image.
 
 ## Licence
 
