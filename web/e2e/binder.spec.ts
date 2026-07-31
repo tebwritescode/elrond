@@ -270,8 +270,7 @@ test('upload, categorise, and print a combined binder', async ({ page }) => {
       expect(
         streams.some(
           (stream) =>
-            stream[0] === document.category &&
-            stream.slice(1).join(' ') === document.title,
+            stream[0] === document.category && stream.slice(1).join(' ') === document.title,
         ),
         `expected a full-page separator for ${document.title}`,
       ).toBe(true);
