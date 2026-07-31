@@ -30,6 +30,10 @@ pub enum ApplicationError {
     #[error(transparent)]
     Render(#[from] crate::ports::RenderError),
 
+    /// An uploaded archive could not be extracted.
+    #[error(transparent)]
+    Archive(#[from] crate::ports::ArchiveError),
+
     /// Password hashing or verification failed for a reason unrelated to the
     /// supplied password being wrong.
     #[error(transparent)]
@@ -100,6 +104,12 @@ impl ApplicationError {
             Self::Render(crate::ports::RenderError::EmptySource { .. }) => "binder_source_empty",
             Self::Render(crate::ports::RenderError::EmptyPlan) => "binder_empty",
             Self::Render(crate::ports::RenderError::Backend(_)) => "binder_render_failure",
+            Self::Archive(crate::ports::ArchiveError::Unreadable) => "archive_unreadable",
+            Self::Archive(crate::ports::ArchiveError::TooLarge { .. }) => "archive_too_large",
+            Self::Archive(crate::ports::ArchiveError::TooManyEntries { .. }) => {
+                "archive_too_many_entries"
+            }
+            Self::Archive(crate::ports::ArchiveError::Entry { .. }) => "archive_entry_unreadable",
             Self::Hashing(_) => "credential_processing_failure",
             Self::InvalidCredentials => "invalid_credentials",
             Self::AccountDisabled => "account_disabled",

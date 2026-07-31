@@ -520,6 +520,172 @@ async fn an_upload_without_a_csrf_token_is_refused() {
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
 }
 
+// ------------------------------------------------------------------- imports
+
+/// Builds a ZIP archive in memory from `(path, bytes)` pairs.
+fn zip_bytes(files: &[(&str, &[u8])]) -> Vec<u8> {
+    use std::io::Write;
+    let mut cursor = std::io::Cursor::new(Vec::new());
+    let mut writer = zip::ZipWriter::new(&mut cursor);
+    let options = zip::write::SimpleFileOptions::default();
+    for (name, bytes) in files {
+        writer.start_file(*name, options).expect("start entry");
+        writer.write_all(bytes).expect("write entry");
+    }
+    writer.finish().expect("finish archive");
+    cursor.into_inner()
+}
+
+#[tokio::test]
+async fn importing_a_zip_recreates_its_folders_as_categories() {
+    let (app, client) = signed_in().await;
+
+    let archive = zip_bytes(&[
+        ("Policies/Retention Policy.pdf", &pdf_bytes("retention")),
+        ("Policies/Access/Access Policy.pdf", &pdf_bytes("access")),
+        ("Minutes/January.pdf", &pdf_bytes("january")),
+    ]);
+
+    let response = upload(
+        &app,
+        &client,
+        "/api/v1/documents/import",
+        "library.zip",
+        "application/zip",
+        &archive,
+        &[],
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::CREATED);
+
+    let body = json_body(response).await;
+    let imported = body["imported"].as_array().expect("imported list");
+    assert_eq!(imported.len(), 3);
+    assert_eq!(body["skipped"].as_array().expect("skipped list").len(), 0);
+
+    // Folders became categories, nested as they were in the archive.
+    assert_eq!(imported[0]["category_name"], "Policies");
+    assert_eq!(imported[1]["category_name"], "Access");
+    assert_eq!(imported[2]["category_name"], "Minutes");
+
+    // Where each document came from inside the archive is recorded.
+    assert_eq!(
+        imported[1]["source_path"],
+        "Policies/Access/Access Policy.pdf"
+    );
+
+    // The tree shows the created hierarchy.
+    let tree = json_body(get(&app, &client, "/api/v1/categories").await).await;
+    let policies = tree
+        .as_array()
+        .expect("a tree")
+        .iter()
+        .find(|node| node["name"] == "Policies")
+        .expect("Policies exists");
+    assert_eq!(policies["children"][0]["name"], "Access");
+}
+
+#[tokio::test]
+async fn an_import_skips_junk_instead_of_failing_the_archive() {
+    let (app, client) = signed_in().await;
+
+    let archive = zip_bytes(&[
+        ("Policies/Retention Policy.pdf", &pdf_bytes("retention")),
+        (
+            "Policies/.DS_Store",
+            b"junk the operating system left behind",
+        ),
+        ("Policies/setup.exe", b"MZ not welcome"),
+    ]);
+
+    let response = upload(
+        &app,
+        &client,
+        "/api/v1/documents/import",
+        "library.zip",
+        "application/zip",
+        &archive,
+        &[],
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::CREATED);
+
+    let body = json_body(response).await;
+    assert_eq!(body["imported"].as_array().expect("imported").len(), 1);
+
+    let skipped = body["skipped"].as_array().expect("skipped");
+    assert_eq!(skipped.len(), 2);
+    assert_eq!(skipped[0]["path"], "Policies/.DS_Store");
+    assert_eq!(skipped[1]["path"], "Policies/setup.exe");
+    for entry in skipped {
+        assert!(
+            entry["reason"].as_str().expect("a reason").contains("file"),
+            "the reason should say what was wrong: {entry:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn an_import_can_target_an_existing_category() {
+    let (app, client) = signed_in().await;
+
+    let created = json_body(
+        send_json(
+            &app,
+            &client,
+            "POST",
+            "/api/v1/categories",
+            json!({ "name": "Archive" }),
+        )
+        .await,
+    )
+    .await;
+    let root = created["id"].as_str().expect("an id").to_owned();
+
+    let archive = zip_bytes(&[("2025/Report.pdf", &pdf_bytes("report"))]);
+    let response = upload(
+        &app,
+        &client,
+        "/api/v1/documents/import",
+        "old.zip",
+        "application/zip",
+        &archive,
+        &[("category_id", root.as_str())],
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::CREATED);
+
+    // The archive's folders were created under the chosen root.
+    let tree = json_body(get(&app, &client, "/api/v1/categories").await).await;
+    let archive_node = tree
+        .as_array()
+        .expect("a tree")
+        .iter()
+        .find(|node| node["name"] == "Archive")
+        .expect("Archive exists");
+    assert_eq!(archive_node["children"][0]["name"], "2025");
+}
+
+#[tokio::test]
+async fn a_file_that_is_not_a_zip_is_refused() {
+    let (app, client) = signed_in().await;
+
+    let response = upload(
+        &app,
+        &client,
+        "/api/v1/documents/import",
+        "not-an-archive.zip",
+        "application/zip",
+        b"%PDF-1.7 this is a pdf, not a zip",
+        &[],
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+
+    let body = json_body(response).await;
+    assert_eq!(body["code"], "archive_unreadable");
+}
+
 // ---------------------------------------------------------------- categories
 
 #[tokio::test]

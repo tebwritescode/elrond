@@ -3,7 +3,7 @@ members = ["crates/*"]
 resolver = "3"
 
 [workspace.package]
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 rust-version = "1.90"
 license = "MIT"
@@ -31,6 +31,10 @@ infer = { version = "0.19", default-features = false }
 # Native PDF assembly. Default features pull in three date crates and rayon; only
 # `time` is wanted, and it is already a workspace dependency.
 lopdf = { version = "0.44", default-features = false, features = ["time"] }
+# ZIP import. Default features pull in every compression scheme plus encryption;
+# real-world archives are stored or deflated, and anything else is rejected as
+# unreadable rather than silently supported.
+zip = { version = "8.6", default-features = false, features = ["deflate"] }
 mime_guess = "2"
 rand = "0.9"
 serde = { version = "1", features = ["derive"] }

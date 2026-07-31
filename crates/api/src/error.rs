@@ -12,7 +12,7 @@ use axum::extract::rejection::JsonRejection;
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use elrond_application::ApplicationError;
-use elrond_application::ports::{BlobError, RenderError, RepositoryError};
+use elrond_application::ports::{ArchiveError, BlobError, RenderError, RepositoryError};
 use serde::Serialize;
 
 /// Result alias for handlers.
@@ -166,6 +166,11 @@ fn application_status(error: &ApplicationError) -> StatusCode {
         ApplicationError::Domain(_)
         | ApplicationError::Render(
             RenderError::UnreadableSource { .. } | RenderError::EmptySource { .. },
+        )
+        | ApplicationError::Archive(
+            ArchiveError::Unreadable
+            | ArchiveError::Entry { .. }
+            | ArchiveError::TooManyEntries { .. },
         ) => StatusCode::UNPROCESSABLE_ENTITY,
         ApplicationError::Repository(RepositoryError::UniqueViolation { .. })
         | ApplicationError::SetupAlreadyCompleted
@@ -175,7 +180,8 @@ fn application_status(error: &ApplicationError) -> StatusCode {
         | ApplicationError::Hashing(_)
         | ApplicationError::Storage(BlobError::Backend(_) | BlobError::IntegrityFailure { .. })
         | ApplicationError::Render(RenderError::Backend(_)) => StatusCode::INTERNAL_SERVER_ERROR,
-        ApplicationError::Storage(BlobError::TooLarge { .. }) => StatusCode::PAYLOAD_TOO_LARGE,
+        ApplicationError::Storage(BlobError::TooLarge { .. })
+        | ApplicationError::Archive(ArchiveError::TooLarge { .. }) => StatusCode::PAYLOAD_TOO_LARGE,
         ApplicationError::InvalidCredentials | ApplicationError::NotAuthenticated => {
             StatusCode::UNAUTHORIZED
         }

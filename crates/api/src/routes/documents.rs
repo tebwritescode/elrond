@@ -4,8 +4,10 @@ use axum::Json;
 use axum::extract::{Multipart, Path, Query, State};
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use elrond_application::documents::{DocumentContent, UploadRequest};
-use elrond_application::ports::{DocumentFilter, DocumentSort, SortOrder, StoredDocument};
+use elrond_application::documents::{DocumentContent, ImportZipRequest, UploadRequest};
+use elrond_application::ports::{
+    ArchiveLimits, DocumentFilter, DocumentSort, SortOrder, StoredDocument,
+};
 use elrond_domain::{
     CategoryId, DocumentId, DocumentVersion, DocumentVersionId, LifecycleState, Role, TagId,
 };
@@ -318,6 +320,126 @@ pub async fn upload(
             duplicate_of: outcome.duplicate_of.map(|id| id.to_string()),
         }),
     ))
+}
+
+/// How many files one archive may carry.
+///
+/// A generous ceiling for a real folder tree, and a hard stop for an archive
+/// built to exhaust the importer.
+const MAX_IMPORT_ENTRIES: usize = 1000;
+
+/// `POST /api/v1/documents/import`
+///
+/// Imports a ZIP archive: its folder structure becomes categories and its files
+/// become documents. Unsupported or invalid entries are reported in `skipped`
+/// rather than failing the archive.
+pub async fn import(
+    State(state): State<AppState>,
+    current: CurrentUser,
+    mut multipart: Multipart,
+) -> ApiResult<(StatusCode, Json<ImportResultView>)> {
+    current.require(Role::Editor)?;
+
+    let mut bytes = None;
+    let mut category_id = None;
+
+    while let Some(field) =
+        multipart
+            .next_field()
+            .await
+            .map_err(|error| ApiError::MalformedRequest {
+                code: "request_body_invalid",
+                message: format!("could not read the import: {error}"),
+            })?
+    {
+        let name = field.name().unwrap_or_default().to_owned();
+        match name.as_str() {
+            "file" => {
+                bytes = Some(
+                    field
+                        .bytes()
+                        .await
+                        .map_err(|error| ApiError::MalformedRequest {
+                            code: "request_body_invalid",
+                            message: format!("could not read the archive part: {error}"),
+                        })?
+                        .to_vec(),
+                );
+            }
+            "category_id" => {
+                let raw = read_text(field).await?;
+                if !raw.is_empty() {
+                    category_id = Some(raw.parse::<CategoryId>().map_err(|_| {
+                        ApiError::MalformedRequest {
+                            code: "request_body_invalid",
+                            message: "category_id must be an identifier".to_owned(),
+                        }
+                    })?);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let bytes = bytes.ok_or(ApiError::MalformedRequest {
+        code: "request_body_invalid",
+        message: "the import must include a file part named \"file\"".to_owned(),
+    })?;
+
+    let outcome = state
+        .documents
+        .import_zip(
+            &current.0,
+            ImportZipRequest {
+                bytes,
+                category_id,
+                limits: ArchiveLimits {
+                    max_entries: MAX_IMPORT_ENTRIES,
+                    // The same ceiling the transport applies to the request body:
+                    // decompressing must not manufacture a payload that could not
+                    // have been uploaded directly.
+                    max_total_bytes: u64::try_from(state.config.max_body_bytes).unwrap_or(u64::MAX),
+                },
+            },
+        )
+        .await?;
+
+    Ok((
+        StatusCode::CREATED,
+        Json(ImportResultView {
+            imported: outcome
+                .imported
+                .iter()
+                .map(|upload| DocumentView::from(&upload.document))
+                .collect(),
+            skipped: outcome
+                .skipped
+                .into_iter()
+                .map(|skip| ImportSkipView {
+                    path: skip.path,
+                    reason: skip.reason,
+                })
+                .collect(),
+        }),
+    ))
+}
+
+/// The result of a ZIP import.
+#[derive(Debug, Serialize)]
+pub struct ImportResultView {
+    /// Documents that were created, in archive order.
+    pub imported: Vec<DocumentView>,
+    /// Entries that were passed over, each with its reason.
+    pub skipped: Vec<ImportSkipView>,
+}
+
+/// One entry that was not imported.
+#[derive(Debug, Serialize)]
+pub struct ImportSkipView {
+    /// Folder-relative path inside the archive.
+    pub path: String,
+    /// Human-readable reason.
+    pub reason: String,
 }
 
 /// The result of an upload.

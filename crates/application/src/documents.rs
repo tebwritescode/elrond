@@ -3,8 +3,9 @@
 use std::sync::Arc;
 
 use elrond_domain::{
-    BlobClass, CategoryId, DocumentId, DocumentTitle, DocumentVersion, DocumentVersionId,
-    LifecycleState, MediaType, OriginalFilename, Role, StorageKey, TagLabel, VersionNumber,
+    BlobClass, CategoryId, CategoryName, DocumentId, DocumentTitle, DocumentVersion,
+    DocumentVersionId, LifecycleState, MediaType, OriginalFilename, Role, StorageKey, TagLabel,
+    VersionNumber,
 };
 use time::OffsetDateTime;
 
@@ -12,8 +13,9 @@ use crate::auth::Authenticated;
 use crate::categories::CategoryService;
 use crate::error::{ApplicationError, ApplicationResult};
 use crate::ports::{
-    BlobStore, Clock, ContentInspector, DocumentFilter, DocumentPage, DocumentRepository,
-    IndexedDocument, NewDocument, NewVersion, SearchIndex, StoredDocument, TagRepository,
+    ArchiveExtractor, ArchiveLimits, BlobStore, Clock, ContentInspector, DocumentFilter,
+    DocumentPage, DocumentRepository, IndexedDocument, NewDocument, NewVersion, SearchIndex,
+    StoredDocument, TagRepository,
 };
 
 /// An upload as it arrives from the transport.
@@ -50,6 +52,42 @@ pub struct UploadOutcome {
     pub duplicate_of: Option<DocumentId>,
 }
 
+/// A ZIP archive to import as documents and categories.
+#[derive(Debug)]
+pub struct ImportZipRequest {
+    /// The archive's bytes.
+    pub bytes: Vec<u8>,
+    /// Category the archive's folder structure is created under. Absent means
+    /// the top level of the tree.
+    pub category_id: Option<CategoryId>,
+    /// Extraction ceilings, supplied by the transport because they follow from
+    /// its own body-size limit.
+    pub limits: ArchiveLimits,
+}
+
+/// One archive entry that was not imported, and why.
+#[derive(Debug, Clone)]
+pub struct ImportSkip {
+    /// The entry's folder-relative path inside the archive.
+    pub path: String,
+    /// Human-readable reason.
+    pub reason: String,
+}
+
+/// The outcome of a ZIP import.
+#[derive(Debug)]
+pub struct ImportOutcome {
+    /// Every document that was created, in archive order.
+    pub imported: Vec<UploadOutcome>,
+    /// Entries that were passed over, each with its reason.
+    ///
+    /// Skipping is deliberate: a folder tree dragged out of a real file system
+    /// carries `.DS_Store`, `Thumbs.db`, and the like, and refusing the whole
+    /// archive over them would make the importer useless for exactly the input
+    /// it exists for.
+    pub skipped: Vec<ImportSkip>,
+}
+
 /// Content ready to send to a client.
 #[derive(Debug, Clone)]
 pub struct DocumentContent {
@@ -81,11 +119,17 @@ pub struct DocumentService {
     inspector: Arc<dyn ContentInspector>,
     search: Arc<dyn SearchIndex>,
     categories: CategoryService,
+    archive: Arc<dyn ArchiveExtractor>,
     clock: Arc<dyn Clock>,
 }
 
 impl DocumentService {
     /// Wires the use cases to their adapters.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the composition root wires each adapter exactly once; a builder \
+                  would add ceremony without removing any argument"
+    )]
     pub fn new(
         documents: Arc<dyn DocumentRepository>,
         tags: Arc<dyn TagRepository>,
@@ -93,6 +137,7 @@ impl DocumentService {
         inspector: Arc<dyn ContentInspector>,
         search: Arc<dyn SearchIndex>,
         categories: CategoryService,
+        archive: Arc<dyn ArchiveExtractor>,
         clock: Arc<dyn Clock>,
     ) -> Self {
         Self {
@@ -102,6 +147,7 @@ impl DocumentService {
             inspector,
             search,
             categories,
+            archive,
             clock,
         }
     }
@@ -193,6 +239,133 @@ impl DocumentService {
             deduplicated: stored.deduplicated,
             duplicate_of,
         })
+    }
+
+    /// Imports a ZIP archive: folders become categories, files become documents.
+    ///
+    /// Best-effort by design. Each entry stands alone — an unsupported file, a
+    /// folder name that breaks a category rule, or a file that fails validation
+    /// is recorded in [`ImportOutcome::skipped`] with its reason, and the rest
+    /// of the archive still imports. Only faults that are the server's own, or
+    /// an archive that cannot be read at all, abort the import.
+    pub async fn import_zip(
+        &self,
+        actor: &Authenticated,
+        request: ImportZipRequest,
+    ) -> ApplicationResult<ImportOutcome> {
+        actor.require_role(Role::Editor)?;
+
+        if request.bytes.is_empty() {
+            return Err(ApplicationError::Domain(
+                elrond_domain::DomainError::Required { field: "file" },
+            ));
+        }
+
+        // A named root has to exist before anything is created under it.
+        let root = match request.category_id {
+            Some(id) => Some(self.categories.require(id).await?.id),
+            None => None,
+        };
+
+        let entries = self.archive.extract(&request.bytes, &request.limits)?;
+        if entries.is_empty() {
+            return Err(ApplicationError::Conflict {
+                resource: "import",
+                reason: "the archive contains no files",
+            });
+        }
+
+        let mut imported = Vec::new();
+        let mut skipped = Vec::new();
+
+        'entries: for entry in entries {
+            let path = if entry.directories.is_empty() {
+                entry.filename.clone()
+            } else {
+                format!("{}/{}", entry.directories.join("/"), entry.filename)
+            };
+
+            // Filtered on extension before anything is written, so the junk a
+            // real folder tree carries is passed over without a blob write. The
+            // authoritative check is still the magic-byte inspection in
+            // [`upload`].
+            let extension = entry
+                .filename
+                .rsplit_once('.')
+                .map(|(_, extension)| extension)
+                .unwrap_or_default();
+            if MediaType::from_extension(extension).is_none() {
+                skipped.push(ImportSkip {
+                    path,
+                    reason: if extension.is_empty() {
+                        "the file has no extension".to_owned()
+                    } else {
+                        format!("unsupported file type \".{extension}\"")
+                    },
+                });
+                continue;
+            }
+
+            // Recreate the folder chain as categories, reusing what exists.
+            let mut parent = root;
+            for directory in &entry.directories {
+                let name = match CategoryName::parse(directory) {
+                    Ok(name) => name,
+                    Err(error) => {
+                        skipped.push(ImportSkip {
+                            path,
+                            reason: format!("folder {directory:?} is not a usable name: {error}"),
+                        });
+                        continue 'entries;
+                    }
+                };
+                match self.categories.ensure(parent, &name).await {
+                    Ok(category) => parent = Some(category.id),
+                    Err(error) if error.is_client_error() => {
+                        skipped.push(ImportSkip {
+                            path,
+                            reason: format!("folder {directory:?} was refused: {error}"),
+                        });
+                        continue 'entries;
+                    }
+                    Err(error) => return Err(error),
+                }
+            }
+
+            let outcome = self
+                .upload(
+                    actor,
+                    UploadRequest {
+                        filename: entry.filename.clone(),
+                        declared_media_type: None,
+                        bytes: entry.bytes,
+                        category_id: parent,
+                        title: None,
+                        tags: Vec::new(),
+                        source_path: Some(path.clone()),
+                    },
+                )
+                .await;
+
+            match outcome {
+                Ok(outcome) => imported.push(outcome),
+                Err(error) if error.is_client_error() => {
+                    skipped.push(ImportSkip {
+                        path,
+                        reason: error.to_string(),
+                    });
+                }
+                Err(error) => return Err(error),
+            }
+        }
+
+        tracing::info!(
+            imported = imported.len(),
+            skipped = skipped.len(),
+            "zip archive imported"
+        );
+
+        Ok(ImportOutcome { imported, skipped })
     }
 
     /// Appends a new version to an existing document.

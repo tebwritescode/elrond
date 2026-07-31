@@ -50,6 +50,7 @@ pub fn router(state: AppState) -> Router {
         .route("/tags", get(documents::list_tags))
         .route("/binders/build", post(binders::build))
         .route("/documents", get(documents::list).post(documents::upload))
+        .route("/documents/import", post(documents::import))
         .route(
             "/documents/{id}",
             get(documents::detail).patch(documents::update),

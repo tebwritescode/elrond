@@ -21,7 +21,7 @@ use elrond_infrastructure::{
     Argon2idHasher, Database, DatabaseSettings, FilesystemBlobStore, MagicByteInspector,
     NativeBinderRenderer, RandomSessionTokens, SqliteCategoryRepository, SqliteDocumentRepository,
     SqliteSearchIndex, SqliteSessionRepository, SqliteTagRepository, SqliteUserRepository,
-    SystemClock,
+    SystemClock, ZipExtractor,
 };
 use settings::Settings;
 use tokio::signal;
@@ -92,6 +92,7 @@ async fn main() -> Result<()> {
         inspector,
         search,
         categories.clone(),
+        Arc::new(ZipExtractor),
         clock,
     );
 

@@ -4,6 +4,7 @@
 //! that knows about SQLite, Argon2, the operating system clock, or the random
 //! number generator lives here and nowhere else.
 
+pub mod archive;
 pub mod blobs;
 pub mod categories;
 pub mod clock;
@@ -16,6 +17,7 @@ pub mod sessions;
 pub mod tags;
 pub mod users;
 
+pub use archive::ZipExtractor;
 pub use blobs::{FilesystemBlobStore, MagicByteInspector};
 pub use categories::SqliteCategoryRepository;
 pub use clock::SystemClock;

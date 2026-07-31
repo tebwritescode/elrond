@@ -19,7 +19,7 @@ use elrond_application::ports::SessionPolicy;
 use elrond_infrastructure::{
     Argon2idHasher, Database, FilesystemBlobStore, MagicByteInspector, NativeBinderRenderer,
     RandomSessionTokens, SqliteCategoryRepository, SqliteDocumentRepository, SqliteSearchIndex,
-    SqliteSessionRepository, SqliteTagRepository, SqliteUserRepository, SystemClock,
+    SqliteSessionRepository, SqliteTagRepository, SqliteUserRepository, SystemClock, ZipExtractor,
 };
 
 /// Makes each test's blob directory unique, so tests can run concurrently.
@@ -91,6 +91,7 @@ async fn build_at(config: ApiConfig, data_dir: &Path) -> TestApp {
         Arc::new(MagicByteInspector),
         search,
         categories.clone(),
+        Arc::new(ZipExtractor),
         clock,
     );
 

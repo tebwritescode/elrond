@@ -28,6 +28,8 @@ elrond-infrastructure.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 tower = { workspace = true, features = ["util"] }
+# Builds the archives the import tests feed through the endpoint.
+zip.workspace = true
 
 [lints]
 workspace = true
