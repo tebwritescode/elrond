@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { expect, test, type Page } from '@playwright/test';
 
 import { drawnText, makePdf, pageCount } from './pdf';
+import { makeZip } from './zip';
 
 /**
  * The whole promised workflow, in a real browser, against a running server:
@@ -125,6 +126,83 @@ test('upload, categorise, and print a combined binder', async ({ page }) => {
     expect(Buffer.compare(await response.body(), uploaded)).toBe(0);
   });
 
+  await test.step('a ZIP of folders imports as categories and documents', async () => {
+    // Import at the top level, so the archive's own folders shape the tree.
+    await page.getByRole('button', { name: startingWith('All documents') }).click();
+    await page.getByRole('button', { name: 'Upload document' }).click();
+    await page.getByLabel(/^File/).setInputFiles({
+      name: 'quarterly.zip',
+      mimeType: 'application/zip',
+      buffer: makeZip([
+        ['Imported/Q1/Quarterly Report.pdf', makePdf('Quarterly Report', 1)],
+        ['Imported/junk.exe', Buffer.from('MZ, not a document')],
+      ]),
+    });
+    await page.getByRole('button', { name: 'Import archive' }).click();
+
+    // The archive imported, and the junk inside it was reported, not fatal.
+    await expect(page.getByText('Imported 1 document from the archive')).toBeVisible();
+    await expect(page.getByText('Imported/junk.exe')).toBeVisible();
+
+    // The folder chain arrived as nested categories.
+    const tree = page.getByRole('navigation', { name: 'Categories' });
+    await expect(tree.getByRole('button', { name: startingWith('Imported') })).toBeVisible();
+    await expect(tree.getByRole('button', { name: startingWith('Q1') })).toBeVisible();
+    await page.getByRole('button', { name: 'Close upload' }).click();
+  });
+
+  await test.step('clicking a document title opens the PDF itself', async () => {
+    await selectCategory(page, 'Q1');
+
+    const href = await page
+      .getByRole('link', { name: 'Quarterly Report' })
+      .getAttribute('href');
+    if (href === null) {
+      throw new Error('the document title is not a link');
+    }
+
+    // Served inline as a PDF: this is what the browser renders in the new tab.
+    const response = await page.request.get(href);
+    expect(response.status()).toBe(200);
+    expect(response.headers()['content-type']).toBe('application/pdf');
+    expect(response.headers()['content-disposition'] ?? '').toContain('inline');
+    expect((await response.body()).subarray(0, 5).toString('latin1')).toBe('%PDF-');
+  });
+
+  await test.step('the info button shows details without opening the document', async () => {
+    await page.getByRole('button', { name: 'Details for Quarterly Report' }).click();
+
+    // Provenance from the archive, and the explicit open action.
+    await expect(page.getByText('Imported/Q1/Quarterly Report.pdf')).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Open document' })).toBeVisible();
+    await expect(page.getByText('1 version')).toBeVisible();
+
+    await page.getByRole('button', { name: 'Close', exact: true }).click();
+    await expect(page.getByRole('link', { name: 'Open document' })).toHaveCount(0);
+  });
+
+  await test.step('categories can be renamed and deleted from the sidebar', async () => {
+    const tree = page.getByRole('navigation', { name: 'Categories' });
+
+    // Rename the imported root.
+    await selectCategory(page, 'Imported');
+    await page.getByRole('button', { name: 'Rename category' }).click();
+    await page.getByLabel(/^Rename/).fill('Archive 2026');
+    await page.getByRole('button', { name: 'Rename', exact: true }).click();
+    await expect(
+      tree.getByRole('button', { name: startingWith('Archive 2026') }),
+    ).toBeVisible();
+
+    // A scratch category can be deleted again while it is empty.
+    await page.getByRole('button', { name: startingWith('All documents') }).click();
+    await page.getByRole('button', { name: 'New category' }).click();
+    await page.getByLabel(/^New category/).fill('Scratch');
+    await page.getByRole('button', { name: 'Create', exact: true }).click();
+    await selectCategory(page, 'Scratch');
+    await page.getByRole('button', { name: 'Delete category' }).click();
+    await expect(tree.getByRole('button', { name: startingWith('Scratch') })).toHaveCount(0);
+  });
+
   const pdf = await test.step('build and download the binder', async () => {
     await page.getByRole('link', { name: 'Binders' }).click();
 
@@ -138,8 +216,9 @@ test('upload, categorise, and print a combined binder', async ({ page }) => {
       'Front cover',
       'Table of contents',
       'Full-page category separators',
+      'Full-page document separators',
     ]) {
-      await expect(page.getByRole('checkbox', { name: toggle })).toBeChecked();
+      await expect(page.getByRole('checkbox', { name: startingWith(toggle) })).toBeChecked();
     }
 
     const download = page.waitForEvent('download');
@@ -153,8 +232,9 @@ test('upload, categorise, and print a combined binder', async ({ page }) => {
     expect(pdf.subarray(0, 5).toString('latin1')).toBe('%PDF-');
     expect(pdf.toString('latin1')).toContain('%%EOF');
 
-    // 1 cover + 1 contents + 2 separators + (2 + 3 + 1) document pages.
-    expect(pageCount(pdf)).toBe(10);
+    // 1 cover + 1 contents + 2 category separators + 3 document separators
+    // + (2 + 3 + 1) document pages.
+    expect(pageCount(pdf)).toBe(13);
 
     const streams = drawnText(pdf);
     const flat = streams.flat();
@@ -172,18 +252,34 @@ test('upload, categorise, and print a combined binder', async ({ page }) => {
     }
 
     // Each category separator is a full page: its own content stream carrying
-    // the category name and nothing else. This is the "full page category
-    // separation" requirement, and it is why the check is per-stream rather than
-    // a substring search over the whole file.
+    // the category name and nothing else. The title is set as large as fits, so
+    // it may wrap across lines — the strings joined back together must be the
+    // name, with nothing extra on the page. This is the "full page category
+    // separation" requirement, and it is why the check is per-stream rather
+    // than a substring search over the whole file.
     for (const name of ['Policies', 'Board Minutes']) {
       expect(
-        streams.some((stream) => stream.length === 1 && stream[0] === name),
+        streams.some((stream) => stream.join(' ') === name),
         `expected a full-page separator for ${name}`,
       ).toBe(true);
     }
 
+    // Each document gets a full-page separator of its own: the category path
+    // above, then the title, and nothing else.
+    for (const document of DOCUMENTS) {
+      expect(
+        streams.some(
+          (stream) =>
+            stream[0] === document.category &&
+            stream.slice(1).join(' ') === document.title,
+        ),
+        `expected a full-page separator for ${document.title}`,
+      ).toBe(true);
+    }
+
     // The contents page cross-references have to match where things actually
-    // landed, or the binder is unusable in print.
+    // landed, or the binder is unusable in print. Each document's entry points
+    // at its separator page — the page a reader turns to.
     const contents = streams.find((stream) => stream[0] === 'Contents');
     expect(contents, 'the binder should have a contents page').toBeDefined();
     expect(contents).toEqual([
@@ -193,15 +289,15 @@ test('upload, categorise, and print a combined binder', async ({ page }) => {
       'Access Policy',
       '4',
       'Retention Policy',
-      '6',
+      '7',
       'Board Minutes',
-      '9',
+      '11',
       'January Minutes',
-      '10',
+      '12',
     ]);
 
     // Page numbers stamped over the merged content, one per page.
-    for (let n = 1; n <= 10; n += 1) {
+    for (let n = 1; n <= 13; n += 1) {
       expect(streams.some((stream) => stream.length === 1 && stream[0] === String(n))).toBe(
         true,
       );
