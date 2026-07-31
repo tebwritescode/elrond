@@ -624,7 +624,7 @@ dependencies = [
 
 [[package]]
 name = "elrond-api"
-version = "0.4.4"
+version = "0.4.5"
 dependencies = [
  "axum",
  "elrond-application",
@@ -636,7 +636,7 @@ dependencies = [
 
 [[package]]
 name = "elrond-application"
-version = "0.4.4"
+version = "0.4.5"
 dependencies = [
  "argon2",
  "async-trait",
@@ -653,14 +653,14 @@ dependencies = [
 
 [[package]]
 name = "elrond-domain"
-version = "0.4.4"
+version = "0.4.5"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "elrond-infrastructure"
-version = "0.4.4"
+version = "0.4.5"
 dependencies = [
  "async-trait",
  "deunicode",
@@ -679,7 +679,7 @@ dependencies = [
 
 [[package]]
 name = "elrond-server"
-version = "0.4.4"
+version = "0.4.5"
 dependencies = [
  "axum",
  "dotenvy",

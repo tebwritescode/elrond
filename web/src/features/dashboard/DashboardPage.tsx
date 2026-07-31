@@ -48,7 +48,7 @@ export function DashboardPage({ loadState, onImport, onSetupComplete }: Dashboar
         </div>
         <div className="date-block" aria-label="Current development release">
           <span>FOUNDATION RELEASE</span>
-          <strong>v0.4.4</strong>
+          <strong>v0.4.5</strong>
         </div>
       </section>
 

@@ -52,10 +52,12 @@ database, immutable originals, and derivatives in the
 served through HTTPS.
 
 Docker Hub publication is handled by GitHub Actions. The repository must define
-`DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` secrets. While both independent
-implementations remain in beta, this primary branch publishes only `beta` and
-`<semver>-beta`; it never publishes `latest`. The canonical publishing contract
-is `docs/publishing.md` on the GitHub `alt` branch.
+`DOCKER_USERNAME` and `DOCKER_PASSWORD` secrets; `DOCKER_PASSWORD` contains a
+Docker Hub access token rather than the account password. While both independent
+implementations remain in beta, this primary branch publishes amd64-only `beta`
+and `<semver>-beta` images; it never publishes `latest`. Stable releases retain
+amd64 and arm64 coverage. The canonical publishing contract is
+`docs/publishing.md` on the GitHub `alt` branch.
 
 ## License
 

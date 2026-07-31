@@ -32,6 +32,9 @@ concurrency:
 env:
   # One shared image; the tag is what separates the implementations.
   IMAGE_NAME: ${{ vars.DOCKERHUB_IMAGE || 'tebwritescode/elrond' }}
+  # Beta builds prioritize feedback speed. Stable tags retain full platform
+  # coverage when the stable trigger is enabled after promotion.
+  PLATFORMS: ${{ (github.ref_type == 'branch' || endsWith(github.ref_name, '-beta')) && 'linux/amd64' || 'linux/amd64,linux/arm64' }}
 
 jobs:
   publish:
@@ -80,7 +83,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          platforms: linux/amd64,linux/arm64
+          platforms: ${{ env.PLATFORMS }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
