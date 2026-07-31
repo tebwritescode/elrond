@@ -84,7 +84,7 @@ export function SetupDialog({ open, onClose, onComplete }: SetupDialogProps) {
               maxLength={64}
               minLength={3}
               onChange={(event) => setUsername(event.target.value)}
-              pattern="[A-Za-z0-9._-]+"
+              pattern="(?:[A-Za-z0-9._]|-)+"
               ref={usernameInput}
               required
               value={username}
