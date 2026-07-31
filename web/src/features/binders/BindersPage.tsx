@@ -35,9 +35,11 @@ export function BindersPage() {
   const [pageNumbers, setPageNumbers] = useState(true);
   const [duplex, setDuplex] = useState(false);
   const [pageSize, setPageSize] = useState<'a4' | 'letter'>('a4');
-  const [result, setResult] = useState<{ pages: number; documents: number; skipped: number } | null>(
-    null,
-  );
+  const [result, setResult] = useState<{
+    pages: number;
+    documents: number;
+    skipped: number;
+  } | null>(null);
 
   const build = useMutation({
     mutationFn: async () => {
@@ -56,7 +58,11 @@ export function BindersPage() {
       return buildBinder(options);
     },
     onSuccess: (built) => {
-      setResult({ pages: built.pageCount, documents: built.documentCount, skipped: built.skipped });
+      setResult({
+        pages: built.pageCount,
+        documents: built.documentCount,
+        skipped: built.skipped,
+      });
 
       // Handing the blob to a temporary anchor is what lets the browser do its own
       // download handling; fetching was necessary because the request needs the
@@ -200,7 +206,11 @@ export function BindersPage() {
               </legend>
               <div className="el-stack" style={{ gap: 'var(--el-space-1)' }}>
                 <Toggle label="Front cover" checked={includeCover} onChange={setIncludeCover} />
-                <Toggle label="Table of contents" checked={includeToc} onChange={setIncludeToc} />
+                <Toggle
+                  label="Table of contents"
+                  checked={includeToc}
+                  onChange={setIncludeToc}
+                />
                 <Toggle
                   label="Full-page category separators"
                   checked={includeSeparators}
