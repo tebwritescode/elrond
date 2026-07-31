@@ -111,8 +111,21 @@ jobs:
       - name: Install cargo-audit
         run: cargo install cargo-audit --locked
 
+      # RUSTSEC-2023-0071 is the Marvin timing attack in `rsa`. It is ignored
+      # because `rsa` is never compiled: it reaches Cargo.lock only through
+      # sqlx's MySQL driver, and this project builds sqlx with
+      # default-features = false and the sqlite feature alone. Verified with
+      #
+      #     cargo tree --workspace --target all -i rsa
+      #     -> warning: nothing to print.
+      #
+      # cargo-audit reads the lockfile rather than the built dependency graph,
+      # which is why it reports a crate that is not in the binary. There is no
+      # patched release to upgrade to, so the alternative would be to disable the
+      # audit entirely; ignoring exactly one justified advisory keeps every other
+      # advisory blocking.
       - name: Rust advisories
-        run: cargo audit --deny warnings
+        run: cargo audit --deny warnings --ignore RUSTSEC-2023-0071
 
       - uses: actions/setup-node@v4
         with:
