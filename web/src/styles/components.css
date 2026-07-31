@@ -595,6 +595,25 @@
   gap: var(--el-space-4);
 }
 
+/* Label/value pairs in the document details panel. */
+.el-info-grid {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: var(--el-space-1) var(--el-space-4);
+  margin: 0;
+}
+
+.el-info-grid dt {
+  color: var(--el-ink-muted);
+  font-size: var(--el-text-sm);
+}
+
+.el-info-grid dd {
+  margin: 0;
+  font-size: var(--el-text-sm);
+  overflow-wrap: anywhere;
+}
+
 /* ----------------------------------------------------------- Library layout */
 
 .el-library {
@@ -765,6 +784,19 @@
   letter-spacing: 0;
   text-transform: none;
   color: var(--el-ink);
+}
+
+/* The title as a link to the document itself. Underlined only on hover: a
+   column of underlines reads as noise, but the pointer change plus hover cue
+   still says "this opens". */
+.el-table__open {
+  color: inherit;
+  text-decoration: none;
+}
+
+.el-table__open:hover,
+.el-table__open:focus-visible {
+  text-decoration: underline;
 }
 
 .el-table__filename {

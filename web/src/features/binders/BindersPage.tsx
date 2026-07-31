@@ -32,6 +32,7 @@ export function BindersPage() {
   const [includeCover, setIncludeCover] = useState(true);
   const [includeToc, setIncludeToc] = useState(true);
   const [includeSeparators, setIncludeSeparators] = useState(true);
+  const [documentSeparators, setDocumentSeparators] = useState(true);
   const [pageNumbers, setPageNumbers] = useState(true);
   const [duplex, setDuplex] = useState(false);
   const [pageSize, setPageSize] = useState<'a4' | 'letter'>('a4');
@@ -52,6 +53,7 @@ export function BindersPage() {
         include_cover: includeCover,
         include_toc: includeToc,
         include_separators: includeSeparators,
+        document_separators: documentSeparators,
         page_numbers: pageNumbers,
         duplex_blank_pages: duplex,
       };
@@ -215,6 +217,12 @@ export function BindersPage() {
                   label="Full-page category separators"
                   checked={includeSeparators}
                   onChange={setIncludeSeparators}
+                />
+                <Toggle
+                  label="Full-page document separators"
+                  hint="A separator page in front of every document, not just every category."
+                  checked={documentSeparators}
+                  onChange={setDocumentSeparators}
                 />
                 <Toggle label="Page numbers" checked={pageNumbers} onChange={setPageNumbers} />
                 <Toggle

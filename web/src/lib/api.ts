@@ -288,6 +288,18 @@ export interface UploadResult {
   readonly duplicate_of: string | null;
 }
 
+/** One archive entry that was not imported, and why. */
+export interface ImportSkip {
+  readonly path: string;
+  readonly reason: string;
+}
+
+/** The result of a ZIP import. */
+export interface ImportResult {
+  readonly imported: readonly DocumentView[];
+  readonly skipped: readonly ImportSkip[];
+}
+
 /** Filters for a document listing. */
 export interface DocumentQuery {
   readonly q?: string;
@@ -415,6 +427,17 @@ export const api = {
     });
   },
 
+  /** Renames a category. */
+  renameCategory(
+    id: string,
+    name: string,
+  ): Promise<{ readonly id: string; readonly name: string }> {
+    return request(`/categories/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body: { name },
+    });
+  },
+
   /** Deletes an empty category. */
   deleteCategory(id: string): Promise<void> {
     return requestNoContent(`/categories/${encodeURIComponent(id)}`, { method: 'DELETE' });
@@ -438,6 +461,15 @@ export const api = {
   /** Uploads a new document. */
   uploadDocument(fields: UploadFields): Promise<UploadResult> {
     return postMultipart<UploadResult>('/documents', fields);
+  },
+
+  /**
+   * Imports a ZIP archive: folders become categories, files become documents.
+   * Unsupported entries are skipped and reported rather than failing the whole
+   * archive.
+   */
+  importZip(file: File, categoryId?: string): Promise<ImportResult> {
+    return postMultipart<ImportResult>('/documents/import', { file, categoryId });
   },
 
   /** Appends a version to an existing document. */
@@ -481,6 +513,7 @@ export interface BuildBinderOptions {
   readonly include_cover: boolean;
   readonly include_toc: boolean;
   readonly include_separators: boolean;
+  readonly document_separators: boolean;
   readonly page_numbers: boolean;
   readonly duplex_blank_pages: boolean;
 }

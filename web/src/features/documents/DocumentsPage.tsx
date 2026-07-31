@@ -7,13 +7,16 @@ import { useBootstrap } from '@/features/auth/session';
 import {
   api,
   originalUrl,
+  pdfUrl,
   type DocumentQuery,
   type DocumentView,
   type Lifecycle,
 } from '@/lib/api';
 
 import { CategoryForm } from './CategoryForm';
+import { CategoryManager } from './CategoryManager';
 import { CategoryTree } from './CategoryTree';
+import { DocumentInfoPanel } from './DocumentInfoPanel';
 import {
   LIFECYCLE_LABELS,
   LIFECYCLE_TONES,
@@ -95,8 +98,21 @@ export function DocumentsPage() {
         )}
 
         {canWrite && (
-          <div style={{ marginTop: 'var(--el-space-4)' }}>
+          <div
+            className="el-stack"
+            style={{ marginTop: 'var(--el-space-4)', gap: 'var(--el-space-3)' }}
+          >
             <CategoryForm parentId={categoryId} categories={categories.data ?? []} />
+            {categoryId !== null && (
+              <CategoryManager
+                key={categoryId}
+                categoryId={categoryId}
+                categories={categories.data ?? []}
+                onDeleted={() => {
+                  setCategoryId(null);
+                }}
+              />
+            )}
           </div>
         )}
 
@@ -299,6 +315,7 @@ function DocumentTable({
   readonly onClearFilters: () => void;
 }) {
   const queryClient = useQueryClient();
+  const [infoId, setInfoId] = useState<string | null>(null);
   const transition = useMutation({
     mutationFn: ({ id, lifecycle }: { id: string; lifecycle: Lifecycle }) =>
       api.transition(id, lifecycle),
@@ -338,6 +355,16 @@ function DocumentTable({
           </Callout>
         </div>
       )}
+      {infoId !== null && (
+        <div style={{ padding: 'var(--el-space-4) var(--el-space-5) 0' }}>
+          <DocumentInfoPanel
+            documentId={infoId}
+            onClose={() => {
+              setInfoId(null);
+            }}
+          />
+        </div>
+      )}
       <div className="el-table-wrap">
         <table className="el-table">
           <caption className="el-visually-hidden">
@@ -361,7 +388,20 @@ function DocumentTable({
             {documents.map((document) => (
               <tr key={document.id}>
                 <th scope="row" className="el-table__title">
-                  {document.title}
+                  {document.current_version.has_pdf ? (
+                    // Clicking a document opens the document. Reading about it
+                    // is the ⓘ button's job.
+                    <a
+                      className="el-table__open"
+                      href={pdfUrl(document.current_version.id)}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      {document.title}
+                    </a>
+                  ) : (
+                    document.title
+                  )}
                   <span className="el-table__filename">
                     {document.current_version.filename}
                   </span>
@@ -391,6 +431,16 @@ function DocumentTable({
                 <td>{formatDate(document.updated_at)}</td>
                 <td>
                   <span className="el-row" style={{ gap: 'var(--el-space-2)' }}>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      aria-label={`Details for ${document.title}`}
+                      onClick={() => {
+                        setInfoId((current) => (current === document.id ? null : document.id));
+                      }}
+                    >
+                      Info
+                    </Button>
                     {/*
                       A plain link rather than a fetch: the browser's own download
                       handling is better than anything reimplemented, and the
