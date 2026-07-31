@@ -12,6 +12,7 @@ import {
   type Lifecycle,
 } from '@/lib/api';
 
+import { CategoryForm } from './CategoryForm';
 import { CategoryTree } from './CategoryTree';
 import {
   LIFECYCLE_LABELS,
@@ -91,6 +92,12 @@ export function DocumentsPage() {
               setPage(0);
             }}
           />
+        )}
+
+        {canWrite && (
+          <div style={{ marginTop: 'var(--el-space-4)' }}>
+            <CategoryForm parentId={categoryId} categories={categories.data ?? []} />
+          </div>
         )}
 
         {(tags.data ?? []).length > 0 && (
