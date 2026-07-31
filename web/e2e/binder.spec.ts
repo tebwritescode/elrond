@@ -64,15 +64,18 @@ test('upload, categorise, and print a combined binder', async ({ page }) => {
     }
   });
 
+  const fixtures = new Map<string, Buffer>();
+
   await test.step('upload a PDF into each category', async () => {
     for (const document of DOCUMENTS) {
+      fixtures.set(document.title, makePdf(document.title, document.pages));
       await selectCategory(page, document.category);
 
       await page.getByRole('button', { name: 'Upload document' }).click();
       await page.getByLabel(/^File/).setInputFiles({
         name: `${document.title.toLowerCase().replace(/ /g, '-')}.pdf`,
         mimeType: 'application/pdf',
-        buffer: makePdf(document.title, document.pages),
+        buffer: fixtures.get(document.title) ?? Buffer.alloc(0),
       });
       await page.getByLabel(/^Title/).fill(document.title);
       await page
@@ -96,6 +99,30 @@ test('upload, categorise, and print a combined binder', async ({ page }) => {
     await expect(
       page.getByRole('rowheader', { name: startingWith('January Minutes') }),
     ).toHaveCount(0);
+  });
+
+  await test.step('the stored original downloads byte-for-byte', async () => {
+    // Immutability of originals is the project's core promise. Fetch the
+    // Download link through the browser's own session and compare against the
+    // exact bytes that were uploaded — visibility of a link proves nothing
+    // about what it serves.
+    const href = await page
+      .getByRole('row', { name: startingWith('Access Policy') })
+      .getByRole('link', { name: 'Download' })
+      .getAttribute('href');
+    if (href === null) {
+      throw new Error('the document row has no download link');
+    }
+
+    const response = await page.request.get(href);
+    expect(response.status()).toBe(200);
+    expect(response.headers()['content-type']).toBe('application/pdf');
+
+    const uploaded = fixtures.get('Access Policy');
+    if (uploaded === undefined) {
+      throw new Error('fixture missing');
+    }
+    expect(Buffer.compare(await response.body(), uploaded)).toBe(0);
   });
 
   const pdf = await test.step('build and download the binder', async () => {
