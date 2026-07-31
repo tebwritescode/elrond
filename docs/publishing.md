@@ -54,6 +54,20 @@ Example: this build's first release is git tag `v0.1.0-alt.beta`, which publishe
 
 ## Rules
 
+**Architectures depend on the ref.** A push to a branch builds `linux/amd64`
+only; a version tag builds `linux/amd64,linux/arm64`. arm64 is emulated under
+QEMU on hosted runners, and compiling a Rust workspace a second time that way
+turns a few minutes into most of an hour — too slow to sit between a push and a
+testable image, and unnecessary for a moving beta tag. An official release is
+worth the wait and ships everything. Both release workflows express this as
+
+```yaml
+platforms: >-
+  ${{ startsWith(github.ref, 'refs/tags/')
+      && 'linux/amd64,linux/arm64'
+      || 'linux/amd64' }}
+```
+
 **Neither side publishes `latest`.** Both are beta. When one implementation is
 chosen, `latest` is pointed at it deliberately — never as a side effect of a
 build. Both release workflows set `flavor: latest=false`.

@@ -45,9 +45,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Emulation for the arm64 build. Native arm64 runners would be faster, but
-      # this keeps the workflow runnable on the standard hosted pool.
+      # Emulation, needed only for the multi-architecture path. Skipped on a
+      # branch build, where nothing but amd64 is produced.
       - uses: docker/setup-qemu-action@v3
+        if: startsWith(github.ref, 'refs/tags/')
 
       - uses: docker/setup-buildx-action@v3
 
@@ -78,7 +79,14 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          platforms: linux/amd64,linux/arm64
+          # A tagged release ships every architecture. A branch build ships only
+          # amd64, because arm64 is emulated under QEMU and compiling this Rust
+          # workspace a second time that way turns a few minutes into the better
+          # part of an hour — too slow to sit between a push and a testable image.
+          platforms: >-
+            ${{ startsWith(github.ref, 'refs/tags/')
+                && 'linux/amd64,linux/arm64'
+                || 'linux/amd64' }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
