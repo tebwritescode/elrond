@@ -148,9 +148,14 @@ impl BinderService {
                 };
 
                 let pdf = self.blobs.get(key).await?;
+                // The document's path is its section's path plus the section
+                // itself, so its separator page places it fully.
+                let mut document_path = path.clone();
+                document_path.push(category.name.to_string());
                 entries.push(PlanEntry::Document {
                     level: level.saturating_add(1),
                     title: stored.document.title.to_string(),
+                    path: document_path,
                     pdf,
                 });
                 document_count += 1;

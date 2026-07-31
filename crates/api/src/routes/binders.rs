@@ -47,6 +47,9 @@ pub struct BuildRequest {
     /// Whether to emit a full-page separator before each category.
     #[serde(default = "yes")]
     pub include_separators: bool,
+    /// Whether to emit a full-page separator before each document as well.
+    #[serde(default = "yes")]
+    pub document_separators: bool,
     /// Whether to number pages.
     #[serde(default = "yes")]
     pub page_numbers: bool,
@@ -103,6 +106,7 @@ pub async fn build(
                     include_cover: body.include_cover,
                     include_toc: body.include_toc,
                     include_separators: body.include_separators,
+                    document_separators: body.document_separators,
                     page_numbering: if body.page_numbers {
                         PageNumbering::Continuous
                     } else {

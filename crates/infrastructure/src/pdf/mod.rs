@@ -102,26 +102,30 @@ fn build(plan: &BinderPlan) -> Result<RenderedBinder, RenderError> {
     }
 
     // ------------------------------------------------------------- body pages
+    let mut body = BodyAssembly {
+        document: &mut document,
+        pages: &mut pages,
+        outline: &mut outline,
+        duplex: plan.settings.duplex_blank_pages,
+        width,
+        height,
+        regular,
+        bold,
+    };
+
     for entry in &plan.entries {
         match entry {
             PlanEntry::Section { level, title, path } => {
-                outline.push((*level, title.clone(), pages.len()));
-
-                if plan.settings.include_separators {
-                    // Pad so a separator always falls on a right-hand page when the
-                    // binder is printed double-sided.
-                    if plan.settings.duplex_blank_pages && pages.len() % 2 == 1 {
-                        let blank = blank_page(width, height);
-                        push_page(&mut document, &mut pages, blank);
-                    }
-                    let separator =
-                        separator_page(&mut document, title, path, width, height, regular, bold);
-                    push_page(&mut document, &mut pages, separator);
-                }
+                body.enter(*level, title, path, plan.settings.include_separators);
             }
-            PlanEntry::Document { level, title, pdf } => {
-                outline.push((*level, title.clone(), pages.len()));
-                merge_source(&mut document, &mut pages, title, pdf)?;
+            PlanEntry::Document {
+                level,
+                title,
+                path,
+                pdf,
+            } => {
+                body.enter(*level, title, path, plan.settings.document_separators);
+                merge_source(body.document, body.pages, title, pdf)?;
             }
         }
     }
@@ -189,6 +193,52 @@ fn build(plan: &BinderPlan) -> Result<RenderedBinder, RenderError> {
     })
 }
 
+/// The moving parts of the body-page loop, so sections and documents share one
+/// separator-emission path instead of two hand-kept copies.
+struct BodyAssembly<'a> {
+    document: &'a mut Document,
+    pages: &'a mut Vec<ObjectId>,
+    outline: &'a mut Vec<(u8, String, usize)>,
+    duplex: bool,
+    width: f32,
+    height: f32,
+    regular: ObjectId,
+    bold: ObjectId,
+}
+
+impl BodyAssembly<'_> {
+    /// Records the outline entry for one plan item and, when asked, emits its
+    /// full-page separator.
+    ///
+    /// Padding happens before the outline entry is recorded, so a bookmark lands
+    /// on the separator rather than on an inserted blank.
+    fn enter(&mut self, level: u8, title: &str, path: &[String], separate: bool) {
+        if separate {
+            // Pad so a separator always falls on a right-hand page when the
+            // binder is printed double-sided.
+            if self.duplex && self.pages.len() % 2 == 1 {
+                let blank = blank_page(self.width, self.height);
+                push_page(self.document, self.pages, blank);
+            }
+            self.outline
+                .push((level, title.to_owned(), self.pages.len()));
+            let separator = separator_page(
+                self.document,
+                title,
+                path,
+                self.width,
+                self.height,
+                self.regular,
+                self.bold,
+            );
+            push_page(self.document, self.pages, separator);
+        } else {
+            self.outline
+                .push((level, title.to_owned(), self.pages.len()));
+        }
+    }
+}
+
 /// Works out where every entry will land, before any page is rendered.
 fn plan_layout(plan: &BinderPlan) -> Result<Vec<PlacedEntry>, RenderError> {
     // Source page counts are needed up front, so each PDF is parsed once here and
@@ -243,16 +293,25 @@ fn plan_layout(plan: &BinderPlan) -> Result<Vec<PlacedEntry>, RenderError> {
                 cursor += pages;
             }
             PlanEntry::Document { level, title, .. } => {
+                if plan.settings.document_separators
+                    && plan.settings.duplex_blank_pages
+                    && cursor % 2 == 1
+                {
+                    cursor += 1;
+                }
+                let separator = u32::from(plan.settings.document_separators);
                 let pages = counts.get(document_index).copied().unwrap_or(0);
                 document_index += 1;
+                // The entry starts at its separator page when there is one:
+                // that is the page a reader turns to.
                 placements.push(PlacedEntry {
                     title: title.clone(),
                     level: *level,
                     is_section: false,
                     page_start: cursor + 1,
-                    page_count: pages,
+                    page_count: separator + pages,
                 });
-                cursor += pages;
+                cursor += separator + pages;
             }
         }
     }
@@ -459,7 +518,11 @@ fn cover_page(
     page_from(document, operations, width, height, regular, bold)
 }
 
-/// A full-page separator announcing a section.
+/// A full-page separator announcing a section or a document.
+///
+/// The title is set as large as will fit: a separator's whole job is to be
+/// found while flipping through a printed binder, so the text is sized to the
+/// page rather than to a body-text scale.
 fn separator_page(
     document: &mut Document,
     title: &str,
@@ -472,29 +535,55 @@ fn separator_page(
     let mut operations = Vec::new();
     let measure = width - MARGIN * 2.0;
 
-    // The ancestor path is shown so a reader who opens the binder at a separator
-    // knows where they are in a nested structure, not just the leaf name.
+    // Largest size, from a display scale down to a floor that always fits,
+    // where the wrapped title stays within the measure and a sane line count.
+    let mut size = 26.0;
+    let mut lines = wrap(title, Face::Bold, size, measure);
+    for candidate in [72.0, 64.0, 56.0, 48.0, 40.0, 32.0] {
+        let attempt = wrap(title, Face::Bold, candidate, measure);
+        let fits = attempt.len() <= 4
+            && attempt
+                .iter()
+                .all(|line| width_of(line, Face::Bold, candidate) <= measure);
+        if fits {
+            size = candidate;
+            lines = attempt;
+            break;
+        }
+    }
+    let leading = size * 1.25;
+
+    // The block is centred on the page's midline; the ancestor path sits above
+    // it so a reader who opens the binder here knows where they are in a nested
+    // structure, not just the leaf name.
+    #[expect(clippy::cast_precision_loss, reason = "a title has few lines")]
+    let block = lines.len() as f32;
+    let top = height * 0.5 + (block - 1.0) * (leading / 2.0);
+
     if !path.is_empty() {
         draw_centred(
             &mut operations,
             &path.join("   ·   "),
             Face::Regular,
-            10.0,
+            12.0,
             width,
-            height * 0.58,
+            top + leading * 1.2,
         );
     }
 
-    let lines = wrap(title, Face::Bold, 26.0, measure);
-    #[expect(clippy::cast_precision_loss, reason = "a title has few lines")]
-    let block = lines.len() as f32;
-    let mut y = height * 0.5 + (block - 1.0) * 16.0;
+    let mut y = top;
     for line in &lines {
-        draw_centred(&mut operations, line, Face::Bold, 26.0, width, y);
-        y -= 32.0;
+        draw_centred(&mut operations, line, Face::Bold, size, width, y);
+        y -= leading;
     }
 
-    draw_rule(&mut operations, width * 0.35, width * 0.65, y + 8.0, 1.5);
+    draw_rule(
+        &mut operations,
+        width * 0.3,
+        width * 0.7,
+        y + leading * 0.4,
+        2.0,
+    );
 
     page_from(document, operations, width, height, regular, bold)
 }
@@ -889,7 +978,9 @@ fn stable_identifier(plan: &BinderPlan) -> String {
                 hasher.update([b'S', *level]);
                 hasher.update(title.as_bytes());
             }
-            PlanEntry::Document { level, title, pdf } => {
+            PlanEntry::Document {
+                level, title, pdf, ..
+            } => {
                 hasher.update([b'D', *level]);
                 hasher.update(title.as_bytes());
                 hasher.update(Sha256::digest(pdf));

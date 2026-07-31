@@ -35,6 +35,7 @@ async fn source_pdf(title: &str, pages: usize) -> Vec<u8> {
                 include_cover: false,
                 include_toc: false,
                 include_separators: true,
+                document_separators: false,
                 page_numbering: PageNumbering::None,
                 duplex_blank_pages: false,
                 page_size: PageSize::A4,
@@ -69,11 +70,13 @@ async fn sample_plan() -> BinderPlan {
             PlanEntry::Document {
                 level: 1,
                 title: "Retention Policy".to_owned(),
+                path: vec!["Policies".to_owned()],
                 pdf: source_pdf("retention", 3).await,
             },
             PlanEntry::Document {
                 level: 1,
                 title: "Access Policy".to_owned(),
+                path: vec!["Policies".to_owned()],
                 pdf: source_pdf("access", 2).await,
             },
             PlanEntry::Section {
@@ -84,6 +87,7 @@ async fn sample_plan() -> BinderPlan {
             PlanEntry::Document {
                 level: 1,
                 title: "January Minutes".to_owned(),
+                path: vec!["Board Minutes".to_owned()],
                 pdf: source_pdf("january", 1).await,
             },
         ],
@@ -137,14 +141,15 @@ async fn the_page_count_accounts_for_every_part() {
         .expect_render()
         .await;
 
-    // 1 cover + 1 contents + 2 separators + (3 + 2 + 1) document pages.
-    assert_eq!(rendered.page_count, 10);
+    // 1 cover + 1 contents + 2 section separators + 3 document separators
+    // + (3 + 2 + 1) document pages.
+    assert_eq!(rendered.page_count, 13);
     assert_eq!(
         Document::load_mem(&rendered.bytes)
             .expect("parses")
             .get_pages()
             .len(),
-        10
+        13
     );
 }
 
@@ -169,18 +174,19 @@ async fn contents_page_numbers_match_where_content_actually_lands() {
     assert_eq!(policies.page_start, 3);
     assert!(policies.is_section);
 
-    // Retention follows its separator and runs for three pages.
+    // Retention starts at its own separator on 4 and occupies it plus three
+    // content pages.
     let retention = by_title("Retention Policy");
     assert_eq!(retention.page_start, 4);
-    assert_eq!(retention.page_count, 3);
+    assert_eq!(retention.page_count, 4);
 
     let access = by_title("Access Policy");
-    assert_eq!(access.page_start, 7);
-    assert_eq!(access.page_count, 2);
+    assert_eq!(access.page_start, 8);
+    assert_eq!(access.page_count, 3);
 
-    // Second separator, then the last document.
-    assert_eq!(by_title("Board Minutes").page_start, 9);
-    assert_eq!(by_title("January Minutes").page_start, 10);
+    // Second section separator, then the last document's separator.
+    assert_eq!(by_title("Board Minutes").page_start, 11);
+    assert_eq!(by_title("January Minutes").page_start, 12);
 
     // The layout must never claim a page beyond the end of the file.
     for placement in &rendered.placements {
@@ -222,6 +228,39 @@ async fn every_section_gets_its_own_full_page_separator() {
 }
 
 #[tokio::test]
+async fn every_document_gets_its_own_separator_page_by_default() {
+    let plan = sample_plan().await;
+    let with_document_separators = NativeBinderRenderer
+        .render(plan.clone())
+        .expect_render()
+        .await;
+
+    let without = NativeBinderRenderer
+        .render(BinderPlan {
+            settings: BinderSettings {
+                document_separators: false,
+                ..plan.settings.clone()
+            },
+            ..plan
+        })
+        .expect_render()
+        .await;
+
+    // Three documents, so exactly three pages differ.
+    assert_eq!(with_document_separators.page_count - without.page_count, 3);
+
+    // Without them, a document's entry occupies only its own content pages and
+    // points straight at the first of them.
+    let retention = without
+        .placements
+        .iter()
+        .find(|placement| placement.title == "Retention Policy")
+        .expect("retention is placed");
+    assert_eq!(retention.page_count, 3);
+    assert_eq!(retention.page_start, 4);
+}
+
+#[tokio::test]
 async fn the_cover_and_contents_can_be_turned_off() {
     let plan = sample_plan().await;
     let bare = NativeBinderRenderer
@@ -236,8 +275,8 @@ async fn the_cover_and_contents_can_be_turned_off() {
         .expect_render()
         .await;
 
-    // 2 separators + 6 document pages.
-    assert_eq!(bare.page_count, 8);
+    // 2 section separators + 3 document separators + 6 document pages.
+    assert_eq!(bare.page_count, 11);
     // The first section now starts on page one.
     assert_eq!(bare.placements[0].page_start, 1);
 }
@@ -256,15 +295,15 @@ async fn duplex_padding_puts_every_separator_on_a_right_hand_page() {
         .expect_render()
         .await;
 
+    // Section and document separators alike: every entry begins on a
+    // right-hand page, or its separator would print on the back of a sheet.
     for placement in &duplex.placements {
-        if placement.is_section {
-            assert_eq!(
-                placement.page_start % 2,
-                1,
-                "{} starts on a left-hand page, so it would print on the back of a sheet",
-                placement.title
-            );
-        }
+        assert_eq!(
+            placement.page_start % 2,
+            1,
+            "{} starts on a left-hand page, so it would print on the back of a sheet",
+            placement.title
+        );
     }
 
     assert_eq!(
@@ -475,6 +514,7 @@ async fn an_unreadable_source_names_the_document() {
             entries: vec![PlanEntry::Document {
                 level: 0,
                 title: "Broken Attachment".to_owned(),
+                path: Vec::new(),
                 pdf: b"this is not a pdf".to_vec(),
             }],
             built_at: built_at(),
@@ -545,11 +585,13 @@ async fn merged_source_pages_survive_intact() {
                 include_cover: false,
                 include_toc: false,
                 include_separators: false,
+                document_separators: false,
                 ..BinderSettings::default()
             },
             entries: vec![PlanEntry::Document {
                 level: 0,
                 title: "Attachment".to_owned(),
+                path: Vec::new(),
                 pdf: source,
             }],
             built_at: built_at(),

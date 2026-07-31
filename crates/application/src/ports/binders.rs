@@ -45,7 +45,7 @@ pub enum PageNumbering {
 /// made with rather than whatever the binder looks like today.
 #[expect(
     clippy::struct_excessive_bools,
-    reason = "these are four independent operator toggles, not a state machine; \
+    reason = "these are independent operator toggles, not a state machine; \
               collapsing them into an enum would misrepresent them as mutually exclusive"
 )]
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -58,6 +58,8 @@ pub struct BinderSettings {
     pub include_toc: bool,
     /// Whether to emit a full-page separator before each section.
     pub include_separators: bool,
+    /// Whether to emit a full-page separator before each document as well.
+    pub document_separators: bool,
     /// How to number pages.
     pub page_numbering: PageNumbering,
     /// Whether to pad sections so each separator falls on a right-hand page.
@@ -74,6 +76,7 @@ impl Default for BinderSettings {
             include_cover: true,
             include_toc: true,
             include_separators: true,
+            document_separators: true,
             page_numbering: PageNumbering::Continuous,
             duplex_blank_pages: false,
         }
@@ -113,6 +116,9 @@ pub enum PlanEntry {
         level: u8,
         /// Title shown in the contents and the outline.
         title: String,
+        /// Category names enclosing the document, outermost first. Shown on the
+        /// document's own separator page.
+        path: Vec<String>,
         /// The document's PDF bytes.
         pdf: Vec<u8>,
     },
