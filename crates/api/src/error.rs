@@ -40,7 +40,7 @@ pub enum ApiError {
 
     /// The request's `Origin` is not in the allowlist.
     ///
-    /// Separate from [`CsrfRejected`] so the message can name both sides of the
+    /// Separate from [`Self::CsrfRejected`] so the message can name both sides of the
     /// mismatch. The received origin is the caller's own header and the allowed
     /// origin is the site's own address, so echoing them reveals nothing — and
     /// without them this failure is a guessing game about which of
