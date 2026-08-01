@@ -1,11 +1,15 @@
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useId, useState } from 'react';
+
 import { Button, Callout, Panel, Pill, Skeleton } from '@/components';
-import { originalUrl, pdfUrl } from '@/lib/api';
+import { api, originalUrl, pdfUrl, type CategoryNode, type DocumentDetail } from '@/lib/api';
 
 import {
   LIFECYCLE_LABELS,
   LIFECYCLE_TONES,
   formatBytes,
   formatDate,
+  useCategories,
   useDocument,
 } from './queries';
 
@@ -117,6 +121,8 @@ export function DocumentInfoPanel({ documentId, onClose }: DocumentInfoPanelProp
             </a>
           </div>
 
+          <MoveToCategory detail={detail.data} />
+
           <section>
             <h4 style={{ margin: '0 0 var(--el-space-2)' }}>
               {detail.data.versions.length === 1
@@ -142,4 +148,82 @@ export function DocumentInfoPanel({ documentId, onClose }: DocumentInfoPanelProp
       )}
     </Panel>
   );
+}
+
+/**
+ * Refiles the document under a different category.
+ *
+ * The server's update endpoint replaces the whole metadata set, so the current
+ * title and tags are echoed back unchanged alongside the new category.
+ */
+function MoveToCategory({ detail }: { readonly detail: DocumentDetail }) {
+  const queryClient = useQueryClient();
+  const selectId = useId();
+  const categories = useCategories();
+  const [target, setTarget] = useState(detail.category_id);
+
+  const move = useMutation({
+    mutationFn: () =>
+      api.updateDocument(detail.id, {
+        title: detail.title,
+        category_id: target,
+        tags: detail.tags.map((tag) => tag.label),
+      }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['documents'] });
+      await queryClient.invalidateQueries({ queryKey: ['document', detail.id] });
+      await queryClient.invalidateQueries({ queryKey: ['categories'] });
+    },
+  });
+
+  const options = flatten(categories.data ?? []);
+
+  return (
+    <div className="el-field">
+      <label className="el-field__label" htmlFor={selectId}>
+        Category
+      </label>
+      {move.isError && (
+        <Callout tone="danger" title="Could not move the document">
+          {move.error instanceof Error ? move.error.message : 'Please try again.'}
+        </Callout>
+      )}
+      <div className="el-row" style={{ gap: 'var(--el-space-2)' }}>
+        <select
+          id={selectId}
+          className="el-field__control"
+          value={target}
+          onChange={(event) => {
+            setTarget(event.target.value);
+          }}
+        >
+          {options.map(({ node, depth }) => (
+            <option key={node.id} value={node.id}>
+              {`${' '.repeat(depth)}${node.name}`}
+            </option>
+          ))}
+        </select>
+        <Button
+          size="sm"
+          variant="secondary"
+          disabled={target === detail.category_id}
+          isLoading={move.isPending}
+          loadingLabel="Moving"
+          onClick={() => {
+            move.mutate();
+          }}
+        >
+          Move
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/** Flattens the tree depth-first, keeping depth for indentation. */
+function flatten(
+  categories: readonly CategoryNode[],
+  depth = 0,
+): { node: CategoryNode; depth: number }[] {
+  return categories.flatMap((node) => [{ node, depth }, ...flatten(node.children, depth + 1)]);
 }
