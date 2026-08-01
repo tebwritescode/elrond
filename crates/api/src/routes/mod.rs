@@ -120,16 +120,33 @@ async fn csrf_guard(
         .and_then(|value| value.to_str().ok())
         && !state.config.allows_origin(origin)
     {
-        tracing::warn!(origin, "rejected a request from an unexpected origin");
-        return Err(ApiError::CsrfRejected {
-            reason: "unexpected origin",
+        // Named on both sides so the operator can see which of the public URL,
+        // a port mapping, or a proxy is wrong, instead of guessing.
+        let mut allowed = state.config.public_origin.clone();
+        for extra in &state.config.additional_allowed_origins {
+            allowed.push_str(", ");
+            allowed.push_str(extra);
+        }
+        tracing::warn!(
+            origin,
+            allowed,
+            "rejected a request from an unexpected origin"
+        );
+        return Err(ApiError::OriginRejected {
+            received: origin.to_owned(),
+            allowed,
         });
     }
 
     let jar = CookieJar::from_headers(request.headers());
     let Some(cookie) = jar.get(CSRF_COOKIE) else {
         return Err(ApiError::CsrfRejected {
-            reason: "missing token cookie",
+            // The commonest cause by far: ELROND_SECURE_COOKIES enabled without
+            // HTTPS makes the browser silently discard the cookie, which then
+            // looks identical from every host. Say so here, where it surfaces.
+            reason: "no token cookie arrived — if ELROND_SECURE_COOKIES is on but Elrond is \
+                     reached over plain http://, the browser silently discards its cookies; \
+                     either serve HTTPS or set ELROND_SECURE_COOKIES=false",
         });
     };
     let Some(header) = request

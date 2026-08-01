@@ -38,6 +38,20 @@ pub enum ApiError {
         reason: &'static str,
     },
 
+    /// The request's `Origin` is not in the allowlist.
+    ///
+    /// Separate from [`CsrfRejected`] so the message can name both sides of the
+    /// mismatch. The received origin is the caller's own header and the allowed
+    /// origin is the site's own address, so echoing them reveals nothing — and
+    /// without them this failure is a guessing game about which of
+    /// `ELROND_PUBLIC_URL`, a port mapping, or a proxy is wrong.
+    OriginRejected {
+        /// The `Origin` header the browser sent.
+        received: String,
+        /// The origin the server is configured to accept.
+        allowed: String,
+    },
+
     /// The caller exceeded a rate limit.
     RateLimited {
         /// Seconds until the caller may retry.
@@ -106,7 +120,7 @@ impl ApiError {
         match self {
             Self::Application(error) => application_status(error),
             Self::MalformedRequest { .. } => StatusCode::BAD_REQUEST,
-            Self::CsrfRejected { .. } => StatusCode::FORBIDDEN,
+            Self::CsrfRejected { .. } | Self::OriginRejected { .. } => StatusCode::FORBIDDEN,
             Self::RateLimited { .. } => StatusCode::TOO_MANY_REQUESTS,
         }
     }
@@ -117,6 +131,7 @@ impl ApiError {
             Self::Application(error) => error.code(),
             Self::MalformedRequest { code, .. } => code,
             Self::CsrfRejected { .. } => "csrf_check_failed",
+            Self::OriginRejected { .. } => "origin_not_allowed",
             Self::RateLimited { .. } => "rate_limited",
         }
     }
@@ -138,6 +153,12 @@ impl ApiError {
             Self::CsrfRejected { reason } => {
                 format!("This request was blocked by a cross-site request check ({reason}).")
             }
+            Self::OriginRejected { received, allowed } => format!(
+                "This request came from {received}, but the server is configured to accept \
+                 {allowed}. Set ELROND_PUBLIC_URL to the address users actually reach Elrond \
+                 on, or add this one to ELROND_ALLOWED_ORIGINS, and recreate the container so \
+                 the change takes effect."
+            ),
             Self::RateLimited {
                 retry_after_seconds,
             } => format!("Too many attempts. Try again in {retry_after_seconds} seconds."),

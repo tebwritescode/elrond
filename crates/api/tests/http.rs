@@ -345,6 +345,21 @@ async fn a_request_from_an_unexpected_origin_is_refused() {
         .expect("router responds");
 
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
+
+    // The refusal must name both sides of the mismatch. Without them the
+    // operator is left guessing which of the public URL, a port mapping, or a
+    // proxy is wrong — and both values are already known to the caller.
+    let body = json_body(response).await;
+    assert_eq!(body["code"], "origin_not_allowed");
+    let message = body["message"].as_str().expect("a message");
+    assert!(
+        message.contains("https://attacker.example.net"),
+        "the received origin is missing: {message}"
+    );
+    assert!(
+        message.contains("ELROND_PUBLIC_URL"),
+        "the fix is not named: {message}"
+    );
 }
 
 #[tokio::test]
