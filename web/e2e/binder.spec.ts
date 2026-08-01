@@ -20,9 +20,9 @@ import { makeZip } from './zip';
 const PASSWORD = 'a sufficiently long passphrase';
 
 const DOCUMENTS = [
-  { category: 'Policies', title: 'Access Policy', pages: 2 },
-  { category: 'Policies', title: 'Retention Policy', pages: 3 },
-  { category: 'Board Minutes', title: 'January Minutes', pages: 1 },
+  { category: 'Policies', title: 'Access Policy', pages: 2, tags: ['policy', 'security'] },
+  { category: 'Policies', title: 'Retention Policy', pages: 3, tags: ['policy'] },
+  { category: 'Board Minutes', title: 'January Minutes', pages: 1, tags: [] },
 ] as const;
 
 test('upload, categorise, and print a combined binder', async ({ page }) => {
@@ -79,6 +79,9 @@ test('upload, categorise, and print a combined binder', async ({ page }) => {
         buffer: fixtures.get(document.title) ?? Buffer.alloc(0),
       });
       await page.getByLabel(/^Title/).fill(document.title);
+      if (document.tags.length > 0) {
+        await page.getByLabel(/^Tags/).fill(document.tags.join(', '));
+      }
       await page
         .getByRole('button', { name: /upload/i })
         .last()
@@ -100,6 +103,43 @@ test('upload, categorise, and print a combined binder', async ({ page }) => {
     await expect(
       page.getByRole('rowheader', { name: startingWith('January Minutes') }),
     ).toHaveCount(0);
+  });
+
+  await test.step('tags narrow the library', async () => {
+    await page.getByRole('button', { name: startingWith('All documents') }).click();
+
+    // The tags typed at upload became filter chips.
+    const policyTag = page.getByRole('button', { name: startingWith('policy') });
+    await policyTag.click();
+    await expect(policyTag).toHaveAttribute('aria-pressed', 'true');
+
+    await expect(
+      page.getByRole('rowheader', { name: startingWith('Access Policy') }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole('rowheader', { name: startingWith('Retention Policy') }),
+    ).toBeVisible();
+    // January Minutes carries no tags, so the filter must drop it.
+    await expect(
+      page.getByRole('rowheader', { name: startingWith('January Minutes') }),
+    ).toHaveCount(0);
+
+    // Narrow further: both selected tags must be carried.
+    const securityTag = page.getByRole('button', { name: startingWith('security') });
+    await securityTag.click();
+    await expect(
+      page.getByRole('rowheader', { name: startingWith('Access Policy') }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole('rowheader', { name: startingWith('Retention Policy') }),
+    ).toHaveCount(0);
+
+    // Clear the filter for the steps that follow.
+    await policyTag.click();
+    await securityTag.click();
+    await expect(
+      page.getByRole('rowheader', { name: startingWith('January Minutes') }),
+    ).toBeVisible();
   });
 
   await test.step('the stored original downloads byte-for-byte', async () => {
@@ -201,6 +241,36 @@ test('upload, categorise, and print a combined binder', async ({ page }) => {
     await selectCategory(page, 'Scratch');
     await page.getByRole('button', { name: 'Delete category' }).click();
     await expect(tree.getByRole('button', { name: startingWith('Scratch') })).toHaveCount(0);
+  });
+
+  await test.step('several PDFs upload in one go and can be re-filed', async () => {
+    await page.getByRole('button', { name: startingWith('All documents') }).click();
+    await page.getByRole('button', { name: 'Upload document' }).click();
+    // Titles derive from filenames, so the fixtures carry their display names.
+    await page.getByLabel(/^Files/).setInputFiles([
+      { name: 'Bulk One.pdf', mimeType: 'application/pdf', buffer: makePdf('Bulk One', 1) },
+      { name: 'Bulk Two.pdf', mimeType: 'application/pdf', buffer: makePdf('Bulk Two', 1) },
+    ]);
+    await page.getByRole('button', { name: 'Upload 2 documents' }).click();
+    await expect(page.getByText('Uploaded 2 documents')).toBeVisible();
+    await page.getByRole('button', { name: 'Close upload' }).click();
+
+    await expect(page.getByRole('rowheader', { name: startingWith('Bulk One') })).toBeVisible();
+    await expect(page.getByRole('rowheader', { name: startingWith('Bulk Two') })).toBeVisible();
+
+    // Re-file one of them from its info panel. Archive 2026 keeps it out of the
+    // binder built below, which selects other categories.
+    await page.getByRole('button', { name: 'Details for Bulk One' }).click();
+    await page.getByLabel('Category', { exact: true }).selectOption({ label: 'Archive 2026' });
+    await page.getByRole('button', { name: 'Move', exact: true }).click();
+    await expect(page.getByRole('button', { name: 'Move', exact: true })).toBeDisabled();
+    await page.getByRole('button', { name: 'Close', exact: true }).click();
+
+    await selectCategory(page, 'Archive 2026');
+    await expect(page.getByRole('rowheader', { name: startingWith('Bulk One') })).toBeVisible();
+    await expect(page.getByRole('rowheader', { name: startingWith('Bulk Two') })).toHaveCount(
+      0,
+    );
   });
 
   const pdf = await test.step('build and download the binder', async () => {
