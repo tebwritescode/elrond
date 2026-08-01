@@ -128,12 +128,13 @@ export function ZipImportDialog({ open, categories, onClose, onImported }: ZipIm
           <div className="import-complete">
             <CheckCircle2 size={38} />
             <h3>Import complete</h3>
-            <p>{mode === "hierarchy" ? "The archive was preserved and its folder structure is now part of your library." : "The original files were preserved and added to your document library."}</p>
+            <p>{mode === "hierarchy" ? "Valid documents were imported with their folder structure; all skips are reported below." : "Valid documents were imported and preserved; all skips are reported below."}</p>
             <dl>
               <div><dt>Documents</dt><dd>{summary.documentsImported}</dd></div>
               <div><dt>Categories</dt><dd>{summary.categoriesCreated}</dd></div>
               <div><dt>Duplicates</dt><dd>{summary.duplicatesSkipped}</dd></div>
               <div><dt>Unsupported</dt><dd>{summary.unsupportedSkipped}</dd></div>
+              <div><dt>Invalid files</dt><dd>{summary.invalidSignatureSkipped}</dd></div>
             </dl>
             <button className="dialog-submit" onClick={close} type="button">Return to library</button>
           </div>

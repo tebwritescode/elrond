@@ -1,21 +1,23 @@
-import { useDeferredValue, useState } from "react";
-import { ChevronRight, CircleX, File, FileCheck2, FileClock, FileText, LoaderCircle, Search, X } from "lucide-react";
-import type { DocumentSummary } from "../../lib/api";
+import { useDeferredValue, useEffect, useState, type FormEvent } from "react";
+import { ChevronRight, CircleX, Download, File, FileCheck2, FileClock, FileText, LoaderCircle, Search, X } from "lucide-react";
+import { updateDocument, type CategorySummary, type DocumentSummary } from "../../lib/api";
 
 type LibraryPageProps = {
   documents: DocumentSummary[];
+  categories: CategorySummary[];
   loading: boolean;
   query: string;
+  onCatalogReload: () => void;
   onQueryChange: (query: string) => void;
 };
 
-export function LibraryPage({ documents, loading, query, onQueryChange }: LibraryPageProps) {
+export function LibraryPage({ categories, documents, loading, onCatalogReload, query, onQueryChange }: LibraryPageProps) {
   const [selectedId, setSelectedId] = useState<string>();
   const selected = documents.find((document) => document.id === selectedId);
   const deferredQuery = useDeferredValue(query.trim().toLocaleLowerCase());
   const visibleDocuments = deferredQuery
     ? documents.filter((document) =>
-        [document.title, document.originalFilename, document.categoryName ?? "", document.status]
+        [document.title, document.originalFilename, document.categoryName ?? "", document.status, ...document.tags]
           .join(" ")
           .toLocaleLowerCase()
           .includes(deferredQuery),
@@ -65,7 +67,7 @@ export function LibraryPage({ documents, loading, query, onQueryChange }: Librar
               <tbody>
                 {visibleDocuments.map((document) => (
                   <tr key={document.id} onClick={() => setSelectedId(document.id)}>
-                    <td><span className="file-glyph"><File size={17} /></span><span><strong>{document.title}</strong><small>{document.originalFilename}</small></span></td>
+                    <td><span className="file-glyph"><File size={17} /></span><span><strong>{document.title}</strong><small>{document.originalFilename}</small><TagList tags={document.tags} /></span></td>
                     <td>{document.categoryName ?? "Unfiled"}</td>
                     <td><Status status={document.status} /></td>
                     <td>v{document.versionNumber}</td>
@@ -87,17 +89,76 @@ export function LibraryPage({ documents, loading, query, onQueryChange }: Librar
           <h2>{selected.title}</h2>
           <p className="inspector-filename">{selected.originalFilename}</p>
           <dl>
-            <div><dt>Primary category</dt><dd>{selected.categoryName ?? "Unfiled"}</dd></div>
             <div><dt>Lifecycle</dt><dd><Status status={selected.status} /></dd></div>
             <div><dt>Current version</dt><dd>Version {selected.versionNumber}</dd></div>
             <div><dt>Viewing copy</dt><dd><PdfStatus document={selected} /></dd></div>
           </dl>
           {selected.conversionStatus === "failed" && selected.conversionError && <p role="alert">{selected.conversionError}</p>}
-          <button className="inspector-primary" disabled={!selected.hasPdf} type="button">{selected.hasPdf ? "Open document" : "PDF not ready"}</button>
+          <DocumentMetadataForm categories={categories} document={selected} onCatalogReload={onCatalogReload} />
+          <button className="inspector-primary" disabled={!selected.hasPdf} onClick={() => window.open(`/api/v1/documents/${encodeURIComponent(selected.id)}/pdf`, "_blank", "noopener,noreferrer")} type="button">{selected.hasPdf ? "Open document" : "PDF not ready"}</button>
+          <a className="inspector-download" href={`/api/v1/documents/${encodeURIComponent(selected.id)}/original`}><Download size={15} /> Download original</a>
         </aside>
       )}
     </div>
   );
+}
+
+function DocumentMetadataForm({ categories, document, onCatalogReload }: { categories: CategorySummary[]; document: DocumentSummary; onCatalogReload: () => void }) {
+  const [categoryId, setCategoryId] = useState(document.categoryId ?? "");
+  const [tags, setTags] = useState(document.tags.join(", "));
+  const [saving, setSaving] = useState(false);
+  const [feedback, setFeedback] = useState<{ kind: "success" | "error"; text: string }>();
+
+  useEffect(() => {
+    setCategoryId(document.categoryId ?? "");
+    setTags(document.tags.join(", "));
+  }, [document.categoryId, document.id, document.tags]);
+
+  useEffect(() => {
+    setFeedback(undefined);
+  }, [document.id]);
+
+  async function save(event: FormEvent) {
+    event.preventDefault();
+    setSaving(true);
+    setFeedback(undefined);
+    const normalizedTags = [...new Set(tags.split(",").map((tag) => tag.trim()).filter(Boolean))];
+    try {
+      await updateDocument(document.id, categoryId || null, normalizedTags);
+      setFeedback({ kind: "success", text: "Document details saved." });
+      onCatalogReload();
+    } catch (error) {
+      setFeedback({ kind: "error", text: error instanceof Error ? error.message : "The document could not be updated." });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return <form className="document-metadata-form" onSubmit={save}>
+    <label><span>Primary category</span><select aria-label="Primary category" onChange={(event) => setCategoryId(event.target.value)} value={categoryId}><option value="">Unfiled</option>{categories.map((category) => <option key={category.id} value={category.id}>{categoryPath(categories, category)}</option>)}</select></label>
+    <label><span>Tags</span><input aria-label="Tags" onChange={(event) => setTags(event.target.value)} placeholder="policy, safety, annual" value={tags} /><small>Separate tags with commas.</small></label>
+    {feedback && <p className={feedback.kind === "error" ? "form-error" : "form-success"} role={feedback.kind === "error" ? "alert" : "status"}>{feedback.text}</p>}
+    <button className="secondary-button" disabled={saving} type="submit">{saving ? "Saving..." : "Save details"}</button>
+  </form>;
+}
+
+function categoryPath(categories: CategorySummary[], category: CategorySummary): string {
+  const names = [category.name];
+  let parentId = category.parentId;
+  const visited = new Set([category.id]);
+  while (parentId) {
+    const parent = categories.find((candidate) => candidate.id === parentId);
+    if (!parent || visited.has(parent.id)) break;
+    visited.add(parent.id);
+    names.unshift(parent.name);
+    parentId = parent.parentId;
+  }
+  return names.join(" / ");
+}
+
+function TagList({ tags }: { tags: string[] }) {
+  if (tags.length === 0) return null;
+  return <span className="document-tags">{tags.map((tag) => <span key={tag}>{tag}</span>)}</span>;
 }
 
 function PdfStatus({ document }: { document: DocumentSummary }) {

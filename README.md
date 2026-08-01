@@ -11,7 +11,8 @@ modules so each can evolve independently.
 
 The Binder Studio generates one PDF from every latest PDF-ready document. The
 output contains a page-numbered index, a full-page separator for each category,
-and every page of each document in deterministic category and title order.
+one separator identifying every document, and every source page in deterministic
+category and title order.
 Source PDFs are checksum-verified before assembly and are never modified.
 
 Custom document selection and ordering, binder templates, covers, bookmarks,
@@ -37,6 +38,15 @@ to `http://127.0.0.1:3000`.
 
 Local databases, uploads, generated documents, secrets, and backups are excluded
 from version control.
+
+Set both `ELROND_ADMIN_USERNAME` and `ELROND_ADMIN_PASSWORD` to create the first
+administrator without the setup screen. Leave both unset or empty to retain the
+interactive first-run setup. The password must contain 12 to 128 characters.
+
+The library supports direct document uploads, nested folder-ZIP imports,
+editable category trees, document reassignment and tags, inline PDF viewing, and
+original-file downloads. ZIP entries whose contents do not match their extension
+are skipped and reported without discarding valid entries in the archive.
 
 ## Docker
 

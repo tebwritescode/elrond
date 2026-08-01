@@ -18,13 +18,16 @@ export type ImportSummary = {
   documentsImported: number;
   duplicatesSkipped: number;
   unsupportedSkipped: number;
+  invalidSignatureSkipped: number;
 };
 
 export type DocumentSummary = {
   id: string;
   title: string;
   status: "draft" | "in_review" | "published" | "archived";
+  categoryId: string | null;
   categoryName: string | null;
+  tags: string[];
   versionNumber: number;
   originalFilename: string;
   hasPdf: boolean;
@@ -151,6 +154,51 @@ export async function fetchCategories(signal?: AbortSignal): Promise<CategorySum
   });
   if (!response.ok) throw new Error("The category tree could not be loaded.");
   return response.json() as Promise<CategorySummary[]>;
+}
+
+async function mutationError(response: Response, fallback: string): Promise<Error> {
+  const body = (await response.json().catch(() => null)) as { error?: string } | null;
+  return new Error(body?.error ?? fallback);
+}
+
+export async function updateDocument(
+  id: string,
+  categoryId: string | null,
+  tags: string[],
+): Promise<void> {
+  const response = await fetch(`/api/v1/documents/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers: { Accept: "application/json", "Content-Type": "application/json" },
+    body: JSON.stringify({ categoryId, tags }),
+  });
+  if (!response.ok) throw await mutationError(response, "The document could not be updated.");
+}
+
+export async function createCategory(name: string, parentId: string | null): Promise<CategorySummary> {
+  const response = await fetch("/api/v1/categories", {
+    method: "POST",
+    headers: { Accept: "application/json", "Content-Type": "application/json" },
+    body: JSON.stringify({ name, parentId }),
+  });
+  if (!response.ok) throw await mutationError(response, "The category could not be created.");
+  return response.json() as Promise<CategorySummary>;
+}
+
+export async function renameCategory(id: string, name: string): Promise<void> {
+  const response = await fetch(`/api/v1/categories/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers: { Accept: "application/json", "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+  if (!response.ok) throw await mutationError(response, "The category could not be renamed.");
+}
+
+export async function deleteCategory(id: string): Promise<void> {
+  const response = await fetch(`/api/v1/categories/${encodeURIComponent(id)}`, { method: "DELETE" });
+  if (!response.ok) throw await mutationError(
+    response,
+    response.status === 409 ? "This category cannot be deleted while it contains documents or child categories." : "The category could not be deleted.",
+  );
 }
 
 export async function downloadPrintableBinder(): Promise<void> {

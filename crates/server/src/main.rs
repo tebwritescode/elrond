@@ -3,7 +3,8 @@ use std::{env, net::SocketAddr, path::Path, sync::Arc};
 use axum::Router;
 use elrond_api::ApiState;
 use elrond_application::{
-    AuthService, BinderService, CatalogService, ConversionService, ImportService, LibraryService,
+    AuthError, AuthService, BinderService, CatalogService, ConversionService, ImportService,
+    LibraryService,
 };
 use elrond_infrastructure::{
     binders::LopdfBinderRenderer, sqlite::SqliteLibraryRepository, stirling::StirlingPdfConverter,
@@ -32,6 +33,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let stirling_configured = stirling_url.is_some();
     let library = LibraryService::new(repository.clone(), stirling_configured);
     let auth = AuthService::new(repository.clone());
+    let bootstrap = bootstrap_credentials(
+        non_empty_env("ELROND_ADMIN_USERNAME"),
+        non_empty_env("ELROND_ADMIN_PASSWORD"),
+    )?;
+    if let Some((username, password)) = bootstrap
+        && library.overview().await?.setup_required
+    {
+        match auth.create_initial_admin(&username, &password).await {
+            Ok(session) => {
+                auth.logout(&session.token).await?;
+                tracing::info!(username = %username, "initial administrator created from environment");
+            }
+            Err(AuthError::SetupCompleted) => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
     let imports = ImportService::new(repository.clone());
     let catalog = CatalogService::new(repository.clone());
     let binders = BinderService::new(repository.clone(), Arc::new(LopdfBinderRenderer));
@@ -86,6 +103,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+fn non_empty_env(name: &str) -> Option<String> {
+    env::var(name).ok().filter(|value| !value.trim().is_empty())
+}
+
+fn bootstrap_credentials(
+    username: Option<String>,
+    password: Option<String>,
+) -> Result<Option<(String, String)>, std::io::Error> {
+    match (username, password) {
+        (None, None) => Ok(None),
+        (Some(username), Some(password)) => Ok(Some((username, password))),
+        _ => Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "ELROND_ADMIN_USERNAME and ELROND_ADMIN_PASSWORD must be set together",
+        )),
+    }
+}
+
 fn init_tracing() {
     let filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new("elrond=info,tower_http=info"));
@@ -95,5 +130,21 @@ fn init_tracing() {
 async fn shutdown_signal() {
     if let Err(error) = tokio::signal::ctrl_c().await {
         tracing::error!(%error, "failed to install shutdown signal handler");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::bootstrap_credentials;
+
+    #[test]
+    fn bootstrap_requires_both_environment_values() {
+        assert!(bootstrap_credentials(None, None).unwrap().is_none());
+        assert!(bootstrap_credentials(Some("admin".into()), None).is_err());
+        assert!(bootstrap_credentials(None, Some("secret".into())).is_err());
+        assert_eq!(
+            bootstrap_credentials(Some("admin".into()), Some("long password".into())).unwrap(),
+            Some(("admin".into(), "long password".into()))
+        );
     }
 }

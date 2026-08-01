@@ -12,7 +12,7 @@ use elrond_application::{
 use elrond_domain::{
     auth::{AuthenticatedUser, InitialAdmin, NewSession, UserCredentials},
     binders::PrintableBinderDocument,
-    catalog::{CategorySummary, DocumentSummary},
+    catalog::{CategorySummary, DocumentContent, DocumentSummary},
     conversions::{ConversionJob, ConversionStatus, PdfDerivative},
     imports::{ImportSummary, PreparedImport},
     library::LibraryOverview,
@@ -48,41 +48,53 @@ impl SqliteLibraryRepository {
 #[async_trait]
 impl CatalogRepository for SqliteLibraryRepository {
     async fn list_documents(&self) -> Result<Vec<DocumentSummary>, CatalogError> {
-        sqlx::query_as::<_, (String, String, String, Option<String>, i64, String, bool, String, Option<String>, String)>(
-            "SELECT documents.id, documents.title, documents.status, categories.name, document_versions.version_number, document_versions.original_filename, document_versions.pdf_storage_key IS NOT NULL, CASE WHEN document_versions.pdf_storage_key IS NOT NULL THEN 'ready' WHEN conversion_jobs.status = 'processing' THEN 'processing' WHEN conversion_jobs.status = 'failed' THEN 'failed' ELSE 'queued' END, conversion_jobs.last_error, documents.updated_at FROM documents LEFT JOIN categories ON categories.id = documents.category_id JOIN document_versions ON document_versions.document_id = documents.id LEFT JOIN conversion_jobs ON conversion_jobs.document_version_id = document_versions.id WHERE document_versions.version_number = (SELECT MAX(latest.version_number) FROM document_versions AS latest WHERE latest.document_id = documents.id) ORDER BY documents.updated_at DESC, documents.title COLLATE NOCASE LIMIT 500",
+        let rows = sqlx::query_as::<_, (String, String, String, Option<String>, Option<String>, i64, String, bool, String, Option<String>, String)>(
+            "SELECT documents.id, documents.title, documents.status, documents.category_id, categories.name, document_versions.version_number, document_versions.original_filename, document_versions.pdf_storage_key IS NOT NULL, CASE WHEN document_versions.pdf_storage_key IS NOT NULL THEN 'ready' WHEN conversion_jobs.status = 'processing' THEN 'processing' WHEN conversion_jobs.status = 'failed' THEN 'failed' ELSE 'queued' END, conversion_jobs.last_error, documents.updated_at FROM documents LEFT JOIN categories ON categories.id = documents.category_id JOIN document_versions ON document_versions.document_id = documents.id LEFT JOIN conversion_jobs ON conversion_jobs.document_version_id = document_versions.id WHERE document_versions.version_number = (SELECT MAX(latest.version_number) FROM document_versions AS latest WHERE latest.document_id = documents.id) ORDER BY documents.updated_at DESC, documents.title COLLATE NOCASE LIMIT 500",
         )
         .fetch_all(&self.pool)
         .await
-        .map(|rows| {
-            rows.into_iter()
-                .map(
-                    |(
-                        id,
-                        title,
-                        status,
-                        category_name,
-                        version_number,
-                        original_filename,
-                        has_pdf,
-                        conversion_status,
-                        conversion_error,
-                        updated_at,
-                    )| DocumentSummary {
-                        id,
-                        title,
-                        status,
-                        category_name,
-                        version_number,
-                        original_filename,
-                        has_pdf,
-                        conversion_status: parse_conversion_status(&conversion_status),
-                        conversion_error,
-                        updated_at,
-                    },
-                )
-                .collect()
-        })
-        .map_err(catalog_repository_error)
+        .map_err(catalog_repository_error)?;
+        let tag_rows = sqlx::query_as::<_, (String, String)>(
+            "SELECT document_id, tag FROM document_tags ORDER BY tag COLLATE NOCASE, tag",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(catalog_repository_error)?;
+        let mut tags = HashMap::<String, Vec<String>>::new();
+        for (document_id, tag) in tag_rows {
+            tags.entry(document_id).or_default().push(tag);
+        }
+        Ok(rows
+            .into_iter()
+            .map(
+                |(
+                    id,
+                    title,
+                    status,
+                    category_id,
+                    category_name,
+                    version_number,
+                    original_filename,
+                    has_pdf,
+                    conversion_status,
+                    conversion_error,
+                    updated_at,
+                )| DocumentSummary {
+                    tags: tags.remove(&id).unwrap_or_default(),
+                    id,
+                    title,
+                    status,
+                    category_id,
+                    category_name,
+                    version_number,
+                    original_filename,
+                    has_pdf,
+                    conversion_status: parse_conversion_status(&conversion_status),
+                    conversion_error,
+                    updated_at,
+                },
+            )
+            .collect())
     }
 
     async fn list_categories(&self) -> Result<Vec<CategorySummary>, CatalogError> {
@@ -102,6 +114,197 @@ impl CatalogRepository for SqliteLibraryRepository {
                 .collect()
         })
         .map_err(catalog_repository_error)
+    }
+
+    async fn load_document_content(
+        &self,
+        document_id: &str,
+        pdf: bool,
+    ) -> Result<DocumentContent, CatalogError> {
+        let row = sqlx::query_as::<_, (String, String, String, String, Option<String>, Option<String>)>(
+            "SELECT original_filename, original_media_type, original_storage_key, original_sha256, pdf_storage_key, pdf_sha256 FROM document_versions WHERE document_id = ? ORDER BY version_number DESC LIMIT 1",
+        )
+        .bind(document_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(catalog_repository_error)?
+        .ok_or(CatalogError::DocumentNotFound)?;
+        let (filename, original_media_type, original_key, original_sha256, pdf_key, pdf_sha256) =
+            row;
+        let (storage_key, expected_sha256, media_type) = if pdf {
+            (
+                pdf_key.ok_or(CatalogError::PdfNotReady)?,
+                pdf_sha256.ok_or(CatalogError::InvalidContent)?,
+                "application/pdf".to_owned(),
+            )
+        } else {
+            (original_key, original_sha256, original_media_type)
+        };
+        let path = safe_storage_path(&self.data_dir, &storage_key)?;
+        let content = tokio::fs::read(path)
+            .await
+            .map_err(|_| CatalogError::InvalidContent)?;
+        if hex::encode(Sha256::digest(&content)) != expected_sha256
+            || (pdf && !content.starts_with(b"%PDF-"))
+        {
+            return Err(CatalogError::InvalidContent);
+        }
+        Ok(DocumentContent {
+            filename,
+            media_type,
+            content,
+        })
+    }
+
+    async fn create_category(
+        &self,
+        name: &str,
+        parent_id: Option<&str>,
+        actor_user_id: &str,
+    ) -> Result<CategorySummary, CatalogError> {
+        let mut transaction = self.pool.begin().await.map_err(catalog_repository_error)?;
+        if let Some(parent_id) = parent_id {
+            require_category(&mut transaction, parent_id).await?;
+        }
+        let id = Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO categories (id, parent_id, name) VALUES (?, ?, ?)")
+            .bind(&id)
+            .bind(parent_id)
+            .bind(name)
+            .execute(&mut *transaction)
+            .await
+            .map_err(category_write_error)?;
+        insert_audit(
+            &mut transaction,
+            actor_user_id,
+            "category.create",
+            "category",
+            &id,
+            serde_json::json!({ "name": name, "parentId": parent_id }),
+        )
+        .await?;
+        transaction
+            .commit()
+            .await
+            .map_err(catalog_repository_error)?;
+        Ok(CategorySummary {
+            id,
+            parent_id: parent_id.map(str::to_owned),
+            name: name.to_owned(),
+            document_count: 0,
+        })
+    }
+
+    async fn rename_category(
+        &self,
+        category_id: &str,
+        name: &str,
+        actor_user_id: &str,
+    ) -> Result<(), CatalogError> {
+        let mut transaction = self.pool.begin().await.map_err(catalog_repository_error)?;
+        let result = sqlx::query(
+            "UPDATE categories SET name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+        )
+        .bind(name)
+        .bind(category_id)
+        .execute(&mut *transaction)
+        .await
+        .map_err(category_write_error)?;
+        if result.rows_affected() == 0 {
+            return Err(CatalogError::CategoryNotFound);
+        }
+        insert_audit(
+            &mut transaction,
+            actor_user_id,
+            "category.rename",
+            "category",
+            category_id,
+            serde_json::json!({ "name": name }),
+        )
+        .await?;
+        transaction.commit().await.map_err(catalog_repository_error)
+    }
+
+    async fn delete_category(
+        &self,
+        category_id: &str,
+        actor_user_id: &str,
+    ) -> Result<(), CatalogError> {
+        let mut transaction = self.pool.begin().await.map_err(catalog_repository_error)?;
+        require_category(&mut transaction, category_id).await?;
+        let occupied: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM categories WHERE parent_id = ? UNION ALL SELECT 1 FROM documents WHERE category_id = ?)",
+        )
+        .bind(category_id)
+        .bind(category_id)
+        .fetch_one(&mut *transaction)
+        .await
+        .map_err(catalog_repository_error)?;
+        if occupied {
+            return Err(CatalogError::CategoryNotEmpty);
+        }
+        insert_audit(
+            &mut transaction,
+            actor_user_id,
+            "category.delete",
+            "category",
+            category_id,
+            serde_json::json!({}),
+        )
+        .await?;
+        sqlx::query("DELETE FROM categories WHERE id = ?")
+            .bind(category_id)
+            .execute(&mut *transaction)
+            .await
+            .map_err(catalog_repository_error)?;
+        transaction.commit().await.map_err(catalog_repository_error)
+    }
+
+    async fn update_document_catalog(
+        &self,
+        document_id: &str,
+        category_id: Option<&str>,
+        tags: &[String],
+        actor_user_id: &str,
+    ) -> Result<(), CatalogError> {
+        let mut transaction = self.pool.begin().await.map_err(catalog_repository_error)?;
+        if let Some(category_id) = category_id {
+            require_category(&mut transaction, category_id).await?;
+        }
+        let updated = sqlx::query(
+            "UPDATE documents SET category_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+        )
+        .bind(category_id)
+        .bind(document_id)
+        .execute(&mut *transaction)
+        .await
+        .map_err(catalog_repository_error)?;
+        if updated.rows_affected() == 0 {
+            return Err(CatalogError::DocumentNotFound);
+        }
+        sqlx::query("DELETE FROM document_tags WHERE document_id = ?")
+            .bind(document_id)
+            .execute(&mut *transaction)
+            .await
+            .map_err(catalog_repository_error)?;
+        for tag in tags {
+            sqlx::query("INSERT INTO document_tags (document_id, tag) VALUES (?, ?)")
+                .bind(document_id)
+                .bind(tag)
+                .execute(&mut *transaction)
+                .await
+                .map_err(catalog_repository_error)?;
+        }
+        insert_audit(
+            &mut transaction,
+            actor_user_id,
+            "document.catalog.update",
+            "document",
+            document_id,
+            serde_json::json!({ "categoryId": category_id, "tags": tags }),
+        )
+        .await?;
+        transaction.commit().await.map_err(catalog_repository_error)
     }
 }
 
@@ -270,6 +473,7 @@ impl ImportRepository for SqliteLibraryRepository {
             documents_imported,
             duplicates_skipped,
             unsupported_skipped: import.unsupported_skipped,
+            invalid_signature_skipped: import.invalid_signature_skipped,
         };
         let details = serde_json::to_string(&summary).map_err(import_repository_error)?;
         sqlx::query(
@@ -591,6 +795,54 @@ impl AuthRepository for SqliteLibraryRepository {
     }
 }
 
+fn safe_storage_path(data_dir: &Path, storage_key: &str) -> Result<PathBuf, CatalogError> {
+    let key = Path::new(storage_key);
+    if storage_key.is_empty()
+        || !key
+            .components()
+            .all(|component| matches!(component, Component::Normal(_)))
+    {
+        return Err(CatalogError::InvalidContent);
+    }
+    Ok(data_dir.join(key))
+}
+
+async fn require_category(
+    transaction: &mut Transaction<'_, Sqlite>,
+    category_id: &str,
+) -> Result<(), CatalogError> {
+    let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM categories WHERE id = ?)")
+        .bind(category_id)
+        .fetch_one(&mut **transaction)
+        .await
+        .map_err(catalog_repository_error)?;
+    if exists {
+        Ok(())
+    } else {
+        Err(CatalogError::CategoryNotFound)
+    }
+}
+
+async fn insert_audit(
+    transaction: &mut Transaction<'_, Sqlite>,
+    actor_user_id: &str,
+    action: &str,
+    subject_type: &str,
+    subject_id: &str,
+    details: serde_json::Value,
+) -> Result<(), CatalogError> {
+    sqlx::query("INSERT INTO audit_events (actor_user_id, action, subject_type, subject_id, details_json) VALUES (?, ?, ?, ?, ?)")
+        .bind(actor_user_id)
+        .bind(action)
+        .bind(subject_type)
+        .bind(subject_id)
+        .bind(details.to_string())
+        .execute(&mut **transaction)
+        .await
+        .map(|_| ())
+        .map_err(catalog_repository_error)
+}
+
 fn repository_error(error: sqlx::Error) -> ApplicationError {
     ApplicationError::Repository(Box::new(error))
 }
@@ -626,13 +878,23 @@ fn catalog_repository_error(error: sqlx::Error) -> CatalogError {
     CatalogError::Repository(Box::new(error))
 }
 
+fn category_write_error(error: sqlx::Error) -> CatalogError {
+    if matches!(&error, sqlx::Error::Database(database) if database.is_unique_violation()) {
+        CatalogError::CategoryConflict
+    } else {
+        catalog_repository_error(error)
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
+    use elrond_application::CatalogService;
     use elrond_domain::imports::PreparedDocument;
 
-    #[tokio::test]
-    async fn commits_hierarchy_documents_and_immutable_originals() {
+    async fn test_repository() -> (tempfile::TempDir, SqliteLibraryRepository) {
         let directory = tempfile::tempdir().expect("temporary data directory should be created");
         let database_path = directory
             .path()
@@ -649,6 +911,44 @@ mod tests {
         .execute(&repository.pool)
         .await
         .expect("test user should be inserted");
+        (directory, repository)
+    }
+
+    async fn import_pdf(repository: &SqliteLibraryRepository) -> String {
+        let content = b"%PDF-1.7\nfixture".to_vec();
+        let sha256 = hex::encode(Sha256::digest(&content));
+        repository
+            .commit_import(
+                PreparedImport {
+                    categories: vec![vec!["Imported".into()]],
+                    documents: vec![PreparedDocument {
+                        category_path: vec!["Imported".into()],
+                        filename: "policy.pdf".into(),
+                        title: "policy".into(),
+                        media_type: "application/pdf".into(),
+                        sha256,
+                        content,
+                    }],
+                    unsupported_skipped: 0,
+                    invalid_signature_skipped: 0,
+                },
+                "tester",
+            )
+            .await
+            .expect("PDF fixture should import");
+        repository
+            .list_documents()
+            .await
+            .expect("documents should list")
+            .into_iter()
+            .find(|document| document.title == "policy")
+            .expect("fixture document should exist")
+            .id
+    }
+
+    #[tokio::test]
+    async fn commits_hierarchy_documents_and_immutable_originals() {
+        let (directory, repository) = test_repository().await;
         let sha256 = "a".repeat(64);
         let import = PreparedImport {
             categories: vec![
@@ -664,6 +964,7 @@ mod tests {
                 content: b"Controlled leave policy".to_vec(),
             }],
             unsupported_skipped: 0,
+            invalid_signature_skipped: 0,
         };
 
         let summary = repository
@@ -739,5 +1040,198 @@ mod tests {
             .expect("converted catalog should load");
         assert_eq!(converted[0].conversion_status, ConversionStatus::Ready);
         assert!(converted[0].has_pdf);
+    }
+
+    #[tokio::test]
+    async fn loads_latest_content_and_rejects_unsafe_or_corrupt_storage() {
+        let (directory, repository) = test_repository().await;
+        let document_id = import_pdf(&repository).await;
+
+        let original = repository
+            .load_document_content(&document_id, false)
+            .await
+            .expect("valid original should load");
+        assert_eq!(original.filename, "policy.pdf");
+        assert_eq!(original.media_type, "application/pdf");
+        assert!(original.content.starts_with(b"%PDF-"));
+        assert!(
+            repository
+                .load_document_content(&document_id, true)
+                .await
+                .expect("valid PDF should load")
+                .content
+                .starts_with(b"%PDF-")
+        );
+
+        sqlx::query("UPDATE document_versions SET pdf_sha256 = ? WHERE document_id = ?")
+            .bind("0".repeat(64))
+            .bind(&document_id)
+            .execute(&repository.pool)
+            .await
+            .unwrap();
+        assert!(matches!(
+            repository.load_document_content(&document_id, true).await,
+            Err(CatalogError::InvalidContent)
+        ));
+
+        let latest = b"latest original".to_vec();
+        let latest_sha = hex::encode(Sha256::digest(&latest));
+        let latest_path = directory.path().join("originals/latest");
+        tokio::fs::write(&latest_path, &latest).await.unwrap();
+        sqlx::query("INSERT INTO document_versions (id, document_id, version_number, original_filename, original_media_type, original_sha256, original_storage_key) VALUES ('latest-version', ?, 2, 'latest.txt', 'text/plain', ?, 'originals/latest')")
+            .bind(&document_id)
+            .bind(&latest_sha)
+            .execute(&repository.pool)
+            .await
+            .unwrap();
+        let loaded_latest = repository
+            .load_document_content(&document_id, false)
+            .await
+            .unwrap();
+        assert_eq!(loaded_latest.filename, "latest.txt");
+        assert_eq!(loaded_latest.content, latest);
+        assert!(matches!(
+            repository.load_document_content(&document_id, true).await,
+            Err(CatalogError::PdfNotReady)
+        ));
+
+        sqlx::query("UPDATE document_versions SET original_storage_key = '../outside.pdf' WHERE id = 'latest-version'")
+            .execute(&repository.pool)
+            .await
+            .unwrap();
+        assert!(matches!(
+            repository.load_document_content(&document_id, false).await,
+            Err(CatalogError::InvalidContent)
+        ));
+        assert!(matches!(
+            repository.load_document_content("missing", false).await,
+            Err(CatalogError::DocumentNotFound)
+        ));
+    }
+
+    #[tokio::test]
+    async fn category_crud_enforces_conflicts_delete_guards_and_audits() {
+        let (_directory, repository) = test_repository().await;
+        let root = repository
+            .create_category("Policies", None, "tester")
+            .await
+            .unwrap();
+        assert!(matches!(
+            repository.create_category("POLICIES", None, "tester").await,
+            Err(CatalogError::CategoryConflict)
+        ));
+        let child = repository
+            .create_category("HR", Some(&root.id), "tester")
+            .await
+            .unwrap();
+        assert!(matches!(
+            repository
+                .create_category("hr", Some(&root.id), "tester")
+                .await,
+            Err(CatalogError::CategoryConflict)
+        ));
+        let sibling = repository
+            .create_category("Legal", Some(&root.id), "tester")
+            .await
+            .unwrap();
+        assert!(matches!(
+            repository
+                .rename_category(&sibling.id, "HR", "tester")
+                .await,
+            Err(CatalogError::CategoryConflict)
+        ));
+        assert!(matches!(
+            repository.delete_category(&root.id, "tester").await,
+            Err(CatalogError::CategoryNotEmpty)
+        ));
+        repository
+            .delete_category(&sibling.id, "tester")
+            .await
+            .unwrap();
+        repository
+            .rename_category(&child.id, "People", "tester")
+            .await
+            .unwrap();
+        repository
+            .delete_category(&child.id, "tester")
+            .await
+            .unwrap();
+        repository
+            .delete_category(&root.id, "tester")
+            .await
+            .unwrap();
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM audit_events")
+                .fetch_one(&repository.pool)
+                .await
+                .unwrap(),
+            7
+        );
+    }
+
+    #[tokio::test]
+    async fn document_assignment_and_tags_are_atomic_normalized_and_listed() {
+        let (_directory, repository) = test_repository().await;
+        let document_id = import_pdf(&repository).await;
+        let category = repository
+            .create_category("Controlled", None, "tester")
+            .await
+            .unwrap();
+        let repository = Arc::new(repository);
+        let service = CatalogService::new(repository.clone());
+        service
+            .update_document_catalog(
+                &document_id,
+                Some(&category.id),
+                vec![" Beta ".into(), "alpha".into(), "beta".into()],
+                "tester",
+            )
+            .await
+            .unwrap();
+        let documents = service.documents().await.unwrap();
+        let document = documents
+            .iter()
+            .find(|document| document.id == document_id)
+            .unwrap();
+        assert_eq!(document.category_id.as_deref(), Some(category.id.as_str()));
+        assert_eq!(document.tags, ["alpha", "Beta"]);
+
+        assert!(matches!(
+            service
+                .update_document_catalog(
+                    &document_id,
+                    Some("missing"),
+                    vec!["replacement".into()],
+                    "tester",
+                )
+                .await,
+            Err(CatalogError::CategoryNotFound)
+        ));
+        let unchanged = service.documents().await.unwrap();
+        let unchanged = unchanged
+            .iter()
+            .find(|document| document.id == document_id)
+            .unwrap();
+        assert_eq!(unchanged.tags, ["alpha", "Beta"]);
+
+        assert!(matches!(
+            repository.delete_category(&category.id, "tester").await,
+            Err(CatalogError::CategoryNotEmpty)
+        ));
+        service
+            .update_document_catalog(&document_id, None, Vec::new(), "tester")
+            .await
+            .unwrap();
+        assert!(
+            service
+                .documents()
+                .await
+                .unwrap()
+                .iter()
+                .find(|document| document.id == document_id)
+                .unwrap()
+                .tags
+                .is_empty()
+        );
     }
 }

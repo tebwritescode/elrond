@@ -5,6 +5,7 @@ pub struct PreparedImport {
     pub categories: Vec<Vec<String>>,
     pub documents: Vec<PreparedDocument>,
     pub unsupported_skipped: usize,
+    pub invalid_signature_skipped: usize,
 }
 
 #[derive(Debug)]
@@ -24,4 +25,5 @@ pub struct ImportSummary {
     pub documents_imported: usize,
     pub duplicates_skipped: usize,
     pub unsupported_skipped: usize,
+    pub invalid_signature_skipped: usize,
 }

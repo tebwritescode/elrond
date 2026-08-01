@@ -32,7 +32,7 @@ export function BindersPage() {
         <div className="binder-copy">
           <p className="eyebrow">Library binder</p>
           <h2>Categories, separators, and complete documents</h2>
-          <p>The download starts with an index, inserts a full-page separator for each category, and includes every page of each latest PDF in category and title order.</p>
+          <p>The download starts with an index, includes category and document separator pages, and includes every page of each latest PDF in category and title order.</p>
           <p className="binder-note">The server verifies and includes every latest PDF-ready document. Documents still awaiting conversion are left out.</p>
           {error && <p className="form-error" role="alert">{error}</p>}
           <button className="primary-button" disabled={busy} onClick={generate} type="button">

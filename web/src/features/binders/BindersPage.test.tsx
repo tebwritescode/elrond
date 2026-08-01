@@ -7,6 +7,7 @@ describe("BindersPage", () => {
     render(<BindersPage />);
 
     expect(screen.getByText(/includes every latest PDF-ready document/)).toBeVisible();
+    expect(screen.getByText(/includes category and document separator pages/)).toBeVisible();
     expect(screen.getByRole("button", { name: "Generate printable binder" })).toBeEnabled();
   });
 });

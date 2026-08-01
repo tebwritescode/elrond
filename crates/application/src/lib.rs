@@ -11,7 +11,7 @@ use async_trait::async_trait;
 use elrond_domain::{
     auth::{AuthenticatedUser, InitialAdmin, NewSession, UserCredentials},
     binders::{GeneratedBinder, PrintableBinderDocument},
-    catalog::{CategorySummary, DocumentSummary},
+    catalog::{CategorySummary, DocumentContent, DocumentSummary},
     conversions::{ConversionJob, PdfDerivative},
     imports::{ImportSummary, PreparedDocument, PreparedImport},
     library::LibraryOverview,
@@ -70,6 +70,22 @@ pub enum ImportError {
 
 #[derive(Debug, Error)]
 pub enum CatalogError {
+    #[error("the requested document was not found")]
+    DocumentNotFound,
+    #[error("the requested category was not found")]
+    CategoryNotFound,
+    #[error("the document PDF is not ready")]
+    PdfNotReady,
+    #[error("the stored document content is missing, unsafe, or invalid")]
+    InvalidContent,
+    #[error("the category name must contain 1 to 120 characters")]
+    InvalidCategoryName,
+    #[error("provide no more than 20 tags, each containing 1 to 40 characters")]
+    InvalidTags,
+    #[error("a category with that name already exists under the same parent")]
+    CategoryConflict,
+    #[error("the category cannot be deleted while it contains categories or documents")]
+    CategoryNotEmpty,
     #[error("the document catalog could not be loaded")]
     Repository(#[source] Box<dyn std::error::Error + Send + Sync>),
 }
@@ -137,6 +153,35 @@ pub trait ImportRepository: Send + Sync {
 pub trait CatalogRepository: Send + Sync {
     async fn list_documents(&self) -> Result<Vec<DocumentSummary>, CatalogError>;
     async fn list_categories(&self) -> Result<Vec<CategorySummary>, CatalogError>;
+    async fn load_document_content(
+        &self,
+        document_id: &str,
+        pdf: bool,
+    ) -> Result<DocumentContent, CatalogError>;
+    async fn create_category(
+        &self,
+        name: &str,
+        parent_id: Option<&str>,
+        actor_user_id: &str,
+    ) -> Result<CategorySummary, CatalogError>;
+    async fn rename_category(
+        &self,
+        category_id: &str,
+        name: &str,
+        actor_user_id: &str,
+    ) -> Result<(), CatalogError>;
+    async fn delete_category(
+        &self,
+        category_id: &str,
+        actor_user_id: &str,
+    ) -> Result<(), CatalogError>;
+    async fn update_document_catalog(
+        &self,
+        document_id: &str,
+        category_id: Option<&str>,
+        tags: &[String],
+        actor_user_id: &str,
+    ) -> Result<(), CatalogError>;
 }
 
 #[async_trait]
@@ -306,6 +351,92 @@ impl CatalogService {
     pub async fn categories(&self) -> Result<Vec<CategorySummary>, CatalogError> {
         self.repository.list_categories().await
     }
+
+    pub async fn document_content(
+        &self,
+        document_id: &str,
+        pdf: bool,
+    ) -> Result<DocumentContent, CatalogError> {
+        self.repository
+            .load_document_content(document_id, pdf)
+            .await
+    }
+
+    pub async fn create_category(
+        &self,
+        name: &str,
+        parent_id: Option<&str>,
+        actor_user_id: &str,
+    ) -> Result<CategorySummary, CatalogError> {
+        let name = normalize_category_name(name)?;
+        self.repository
+            .create_category(&name, parent_id, actor_user_id)
+            .await
+    }
+
+    pub async fn rename_category(
+        &self,
+        category_id: &str,
+        name: &str,
+        actor_user_id: &str,
+    ) -> Result<(), CatalogError> {
+        let name = normalize_category_name(name)?;
+        self.repository
+            .rename_category(category_id, &name, actor_user_id)
+            .await
+    }
+
+    pub async fn delete_category(
+        &self,
+        category_id: &str,
+        actor_user_id: &str,
+    ) -> Result<(), CatalogError> {
+        self.repository
+            .delete_category(category_id, actor_user_id)
+            .await
+    }
+
+    pub async fn update_document_catalog(
+        &self,
+        document_id: &str,
+        category_id: Option<&str>,
+        tags: Vec<String>,
+        actor_user_id: &str,
+    ) -> Result<(), CatalogError> {
+        let tags = normalize_tags(tags)?;
+        self.repository
+            .update_document_catalog(document_id, category_id, &tags, actor_user_id)
+            .await
+    }
+}
+
+fn normalize_category_name(name: &str) -> Result<String, CatalogError> {
+    let name = name.trim();
+    if name.is_empty() || name.chars().count() > 120 {
+        return Err(CatalogError::InvalidCategoryName);
+    }
+    Ok(name.to_owned())
+}
+
+fn normalize_tags(tags: Vec<String>) -> Result<Vec<String>, CatalogError> {
+    if tags.len() > 20 {
+        return Err(CatalogError::InvalidTags);
+    }
+    let mut normalized = Vec::with_capacity(tags.len());
+    for tag in tags {
+        let tag = tag.trim();
+        if tag.is_empty() || tag.chars().count() > 40 {
+            return Err(CatalogError::InvalidTags);
+        }
+        if !normalized
+            .iter()
+            .any(|existing: &String| existing.eq_ignore_ascii_case(tag))
+        {
+            normalized.push(tag.to_owned());
+        }
+    }
+    normalized.sort_by_key(|tag| tag.to_lowercase());
+    Ok(normalized)
 }
 
 impl ImportService {
@@ -384,6 +515,7 @@ impl ImportService {
                 content,
             }],
             unsupported_skipped: 0,
+            invalid_signature_skipped: 0,
         };
         self.repository.commit_import(import, actor_user_id).await
     }
@@ -406,6 +538,7 @@ impl ImportService {
         let mut categories = BTreeSet::new();
         let mut documents = Vec::new();
         let mut unsupported_skipped = 0;
+        let mut invalid_signature_skipped = 0;
 
         for index in 0..archive.len() {
             let mut entry = archive
@@ -469,20 +602,20 @@ impl ImportService {
                 return Err(ImportError::ExpandedSizeLimit);
             }
 
+            let mut content = Vec::with_capacity(entry.size() as usize);
+            entry
+                .read_to_end(&mut content)
+                .map_err(|_| ImportError::Extraction)?;
+            if !content_matches_extension(&extension, &content) {
+                invalid_signature_skipped += 1;
+                continue;
+            }
             let mut category_path = components[..components.len() - 1].to_vec();
             if category_path.is_empty() {
                 category_path.push(root_category.clone());
             }
             for depth in 1..=category_path.len() {
                 categories.insert(category_path[..depth].to_vec());
-            }
-
-            let mut content = Vec::with_capacity(entry.size() as usize);
-            entry
-                .read_to_end(&mut content)
-                .map_err(|_| ImportError::Extraction)?;
-            if !content_matches_extension(&extension, &content) {
-                return Err(ImportError::InvalidFileType);
             }
             let sha256 = hex::encode(Sha256::digest(&content));
             let title = Path::new(&filename)
@@ -504,6 +637,7 @@ impl ImportService {
             categories: categories.into_iter().collect(),
             documents,
             unsupported_skipped,
+            invalid_signature_skipped,
         })
     }
 }
@@ -532,12 +666,18 @@ fn supported_media_type(extension: &str) -> Option<&'static str> {
 
 fn content_matches_extension(extension: &str, content: &[u8]) -> bool {
     match extension {
-        "pdf" => content.starts_with(b"%PDF-"),
+        "pdf" => content[..content.len().min(1024)]
+            .windows(5)
+            .any(|window| window == b"%PDF-"),
         "docx" | "xlsx" | "pptx" | "odt" | "ods" | "odp" => content.starts_with(b"PK"),
         "jpg" | "jpeg" => content.starts_with(&[0xff, 0xd8, 0xff]),
         "png" => content.starts_with(b"\x89PNG\r\n\x1a\n"),
         "tif" | "tiff" => content.starts_with(b"II*\0") || content.starts_with(b"MM\0*"),
-        "txt" => std::str::from_utf8(content).is_ok(),
+        "txt" => {
+            std::str::from_utf8(content).is_ok()
+                || (content.len().is_multiple_of(2)
+                    && (content.starts_with(&[0xff, 0xfe]) || content.starts_with(&[0xfe, 0xff])))
+        }
         _ => false,
     }
 }
@@ -809,7 +949,7 @@ mod tests {
     }
 
     #[test]
-    fn zip_import_rejects_content_disguised_as_pdf() {
+    fn zip_import_skips_content_disguised_as_pdf() {
         let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
         writer
             .start_file("Policies/not_a_pdf.pdf", SimpleFileOptions::default())
@@ -822,9 +962,63 @@ mod tests {
             .expect("test ZIP should finish")
             .into_inner();
 
-        assert!(matches!(
-            ImportService::prepare_zip(bytes, "Imported"),
-            Err(ImportError::InvalidFileType)
-        ));
+        let prepared = ImportService::prepare_zip(bytes, "Imported")
+            .expect("an invalid entry should not abort the archive");
+        assert!(prepared.documents.is_empty());
+        assert!(prepared.categories.is_empty());
+        assert_eq!(prepared.invalid_signature_skipped, 1);
+    }
+
+    #[test]
+    fn zip_import_keeps_valid_deep_files_when_an_entry_is_invalid() {
+        let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+        writer
+            .start_file(
+                "Operations/Regional/North/runbook.pdf",
+                SimpleFileOptions::default(),
+            )
+            .expect("test entry should start");
+        writer
+            .write_all(b"preamble\n%PDF-1.7\nvalid fixture")
+            .expect("test content should write");
+        writer
+            .start_file(
+                "Operations/Regional/South/broken.pdf",
+                SimpleFileOptions::default(),
+            )
+            .expect("test entry should start");
+        writer
+            .write_all(b"not actually a PDF")
+            .expect("test content should write");
+        let bytes = writer
+            .finish()
+            .expect("test ZIP should finish")
+            .into_inner();
+
+        let prepared = ImportService::prepare_zip(bytes, "Imported")
+            .expect("valid entries should still import");
+        assert_eq!(prepared.documents.len(), 1);
+        assert_eq!(
+            prepared.documents[0].category_path,
+            ["Operations", "Regional", "North"]
+        );
+        assert_eq!(prepared.invalid_signature_skipped, 1);
+        assert!(!prepared.categories.contains(&vec![
+            "Operations".into(),
+            "Regional".into(),
+            "South".into()
+        ]));
+    }
+
+    #[test]
+    fn catalog_values_are_trimmed_deduplicated_and_bounded() {
+        assert_eq!(normalize_category_name("  Policies  ").unwrap(), "Policies");
+        assert!(normalize_category_name(" ").is_err());
+        assert_eq!(
+            normalize_tags(vec![" Beta ".into(), "alpha".into(), "beta".into()]).unwrap(),
+            ["alpha", "Beta"]
+        );
+        assert!(normalize_tags(vec!["x".repeat(41)]).is_err());
+        assert!(normalize_tags((0..21).map(|index| index.to_string()).collect()).is_err());
     }
 }

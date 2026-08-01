@@ -27,6 +27,7 @@ export function App() {
   const [loadState, setLoadState] = useState<LoadState>({ status: "loading" });
   const [currentUser, setCurrentUser] = useState<SessionUser | null>();
   const [reloadKey, setReloadKey] = useState(0);
+  const [catalogReloadKey, setCatalogReloadKey] = useState(0);
   const [importOpen, setImportOpen] = useState(false);
   const [activeSection, setActiveSection] = useState<WorkspaceSection>("overview");
   const [query, setQuery] = useState("");
@@ -76,7 +77,7 @@ export function App() {
       })
       .finally(() => setCatalogLoading(false));
     return () => controller.abort();
-  }, [currentUser, reloadKey]);
+  }, [currentUser, reloadKey, catalogReloadKey]);
 
   useEffect(() => {
     if (loadState.status !== "ready" || !loadState.overview.stirlingConfigured || !currentUser || !documents.some((document) => ["queued", "processing"].includes(document.conversionStatus))) return;
@@ -126,9 +127,9 @@ export function App() {
         />
       )}
       {activeSection === "library" && (
-        <LibraryPage documents={documents} loading={catalogLoading} onQueryChange={setQuery} query={query} />
+        <LibraryPage categories={categories} documents={documents} loading={catalogLoading} onCatalogReload={() => setCatalogReloadKey((key) => key + 1)} onQueryChange={setQuery} query={query} />
       )}
-      {activeSection === "categories" && <CategoriesPage categories={categories} loading={catalogLoading} />}
+      {activeSection === "categories" && <CategoriesPage categories={categories} loading={catalogLoading} onCatalogReload={() => setCatalogReloadKey((key) => key + 1)} />}
       {activeSection === "binders" && <BindersPage />}
       {activeSection === "activity" && (
         <section className="planned-workspace">

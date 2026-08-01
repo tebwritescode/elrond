@@ -46,14 +46,13 @@ impl BinderRenderer for LopdfBinderRenderer {
                 })
             })
             .collect::<Result<Vec<_>, BinderError>>()?;
-        if loaded.iter().map(|document| document.pages).sum::<usize>() > 20_000 {
+        let index_rows = index_row_count(&loaded);
+        let index_pages = index_rows.div_ceil(36).max(1);
+        if binder_page_count(&loaded, index_pages) > 20_000 {
             return Err(BinderError::Render(
                 "the binder exceeds the 20,000 page limit".into(),
             ));
         }
-
-        let index_rows = index_row_count(&loaded);
-        let index_pages = index_rows.div_ceil(36).max(1);
         let mut page = index_pages + 1;
         let mut previous_category = None;
         for document in &mut loaded {
@@ -62,7 +61,7 @@ impl BinderRenderer for LopdfBinderRenderer {
                 previous_category = Some(&document.source.category_path);
             }
             document.start_page = page;
-            page += document.pages;
+            page += document.pages + 1;
         }
 
         let mut parts = Vec::new();
@@ -83,10 +82,28 @@ impl BinderRenderer for LopdfBinderRenderer {
                 parts.push(text_page(&document.source.category_path, &[])?);
                 previous_category = Some(document.source.category_path.clone());
             }
+            parts.push(text_page(
+                &document.source.title,
+                &[
+                    format!("Category: {}", document.source.category_path),
+                    format!("Version: {}", document.source.version_number),
+                ],
+            )?);
             parts.push(document.pdf);
         }
         merge_documents(parts)
     }
+}
+
+fn binder_page_count(documents: &[LoadedDocument], index_pages: usize) -> usize {
+    let category_pages = index_row_count(documents) - documents.len();
+    index_pages
+        + category_pages
+        + documents.len()
+        + documents
+            .iter()
+            .map(|document| document.pages)
+            .sum::<usize>()
 }
 
 fn index_row_count(documents: &[LoadedDocument]) -> usize {
@@ -113,7 +130,7 @@ fn index_lines(documents: &[LoadedDocument]) -> Vec<String> {
             ));
             previous = Some(&document.source.category_path);
         }
-        let end_page = document.start_page + document.pages - 1;
+        let end_page = document.start_page + document.pages;
         let pages = if end_page == document.start_page {
             document.start_page.to_string()
         } else {
@@ -365,7 +382,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn renders_index_separator_and_every_source_page() {
+    fn renders_index_category_and_document_separators_and_every_source_page() {
         let documents = vec![
             source("Policy A", "Policies", 2),
             source("Policy B", "Policies", 1),
@@ -375,7 +392,55 @@ mod tests {
             .expect("binder should render");
         let binder = Document::load_mem(&bytes).expect("binder should be readable");
 
-        assert_eq!(binder.get_pages().len(), 5);
+        assert_eq!(binder.get_pages().len(), 7);
+        assert_eq!(
+            page_texts(&binder),
+            [
+                "Binder IndexPolicies ................................ 2    Policy A (v1) ................................ 3-5    Policy B (v1) ................................ 6-7",
+                "Policies",
+                "Policy ACategory: PoliciesVersion: 1",
+                "Policy A page 1",
+                "Policy A page 2",
+                "Policy BCategory: PoliciesVersion: 1",
+                "Policy B page 1",
+            ]
+        );
+    }
+
+    #[test]
+    fn paginates_the_index_without_changing_separator_page_references() {
+        let documents = (1..=36)
+            .map(|number| source(&format!("Policy {number:02}"), "Policies", 1))
+            .collect();
+        let bytes = LopdfBinderRenderer
+            .render(documents)
+            .expect("binder should render");
+        let binder = Document::load_mem(&bytes).expect("binder should be readable");
+        let texts = page_texts(&binder);
+
+        assert_eq!(binder.get_pages().len(), 75);
+        assert!(texts[0].starts_with("Binder IndexPolicies ................................ 3"));
+        assert!(texts[0].contains("Policy 35 (v1) ................................ 72-73"));
+        assert_eq!(
+            texts[1],
+            "Binder Index, continued    Policy 36 (v1) ................................ 74-75"
+        );
+        assert_eq!(texts[2], "Policies");
+        assert_eq!(texts[3], "Policy 01Category: PoliciesVersion: 1");
+        assert_eq!(texts[4], "Policy 01 page 1");
+    }
+
+    #[test]
+    fn counts_generated_pages_toward_the_page_limit() {
+        let source = source("Large document", "Policies", 1);
+        let loaded = vec![LoadedDocument {
+            source,
+            pdf: text_page("Source", &[]).unwrap(),
+            pages: 19_998,
+            start_page: 0,
+        }];
+
+        assert_eq!(binder_page_count(&loaded, 1), 20_001);
     }
 
     #[test]
@@ -426,7 +491,7 @@ mod tests {
             })
             .unwrap();
         let output_pages: Vec<ObjectId> = binder.get_pages().into_values().collect();
-        let first_source_content = binder.get_page_content(output_pages[2]);
+        let first_source_content = binder.get_page_content(output_pages[3]);
 
         assert!(
             first_source_content
@@ -515,6 +580,27 @@ mod tests {
         sanitize_active_object(&mut resources);
 
         assert!(resources.as_dict().unwrap().get(b"A").is_ok());
+    }
+
+    fn page_texts(document: &Document) -> Vec<String> {
+        document
+            .get_pages()
+            .into_values()
+            .map(|page_id| {
+                Content::decode(&document.get_page_content(page_id))
+                    .unwrap()
+                    .operations
+                    .into_iter()
+                    .filter(|operation| operation.operator == "Tj")
+                    .map(|operation| {
+                        operation.operands[0]
+                            .as_str()
+                            .map(|text| String::from_utf8_lossy(text).into_owned())
+                            .unwrap()
+                    })
+                    .collect()
+            })
+            .collect()
     }
 
     fn source(title: &str, category: &str, pages: usize) -> PrintableBinderDocument {

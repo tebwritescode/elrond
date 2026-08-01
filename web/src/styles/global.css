@@ -13,7 +13,8 @@ body {
 }
 
 button,
-input {
+input,
+select {
   font: inherit;
 }
 
@@ -22,7 +23,9 @@ button {
 }
 
 button:focus-visible,
-input:focus-visible {
+input:focus-visible,
+select:focus-visible,
+a:focus-visible {
   outline: 3px solid #76a994;
   outline-offset: 2px;
 }
@@ -877,6 +880,21 @@ h1 {
   display: block;
 }
 
+.document-tags {
+  display: flex !important;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 5px;
+}
+
+.document-tags span {
+  padding: 2px 6px;
+  color: var(--forest);
+  font-size: 8px;
+  background: var(--forest-soft);
+  border-radius: 999px;
+}
+
 .document-table td:first-child strong {
   margin-bottom: 3px;
   color: var(--ink);
@@ -1102,9 +1120,97 @@ h1 {
   cursor: not-allowed;
 }
 
+.document-metadata-form {
+  display: grid;
+  gap: 14px;
+  margin-top: 22px;
+  padding-top: 20px;
+  border-top: 1px solid var(--line);
+}
+
+.document-metadata-form label > span,
+.category-create-root > label {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--ink-muted);
+  font-size: 10px;
+  font-weight: 750;
+}
+
+.document-metadata-form input,
+.document-metadata-form select,
+.category-create-root input,
+.category-inline-form input,
+.category-child-form input {
+  width: 100%;
+  min-height: 39px;
+  padding: 0 10px;
+  color: var(--ink);
+  background: white;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+}
+
+.document-metadata-form small {
+  display: block;
+  margin-top: 5px;
+  color: var(--ink-faint);
+  font-size: 9px;
+}
+
+.document-metadata-form .form-error,
+.document-metadata-form .form-success { margin: 0; }
+.form-success { color: var(--forest); font-size: 11px; }
+
+.inspector-download {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 40px;
+  margin-top: 9px;
+  color: var(--forest);
+  font-size: 11px;
+  font-weight: 750;
+  text-decoration: none;
+  border: 1px solid #a9bdb4;
+  border-radius: var(--radius-sm);
+}
+
 .category-workspace {
   padding: 13px;
 }
+
+.category-create-root {
+  padding: 10px 5px 17px;
+  border-bottom: 1px solid var(--line);
+}
+
+.category-create-root > div {
+  display: flex;
+  gap: 8px;
+  max-width: 540px;
+}
+
+.category-create-root button,
+.category-inline-form button,
+.category-child-form button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 39px;
+  padding: 0 12px;
+  color: white;
+  font-size: 10px;
+  font-weight: 750;
+  white-space: nowrap;
+  background: var(--forest);
+  border: 0;
+  border-radius: var(--radius-sm);
+}
+
+.category-error { margin: 13px 5px; }
 
 .category-tree-large {
   overflow: hidden;
@@ -1114,7 +1220,7 @@ h1 {
 
 .category-row {
   display: grid;
-  grid-template-columns: 23px minmax(0, 1fr) auto;
+  grid-template-columns: 23px minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 9px;
   min-height: 51px;
@@ -1132,13 +1238,39 @@ h1 {
   font-size: 12px;
 }
 
-.category-row span {
+.category-count {
   display: inline-flex;
   align-items: center;
   gap: 5px;
   color: var(--ink-faint);
   font-size: 10px;
 }
+
+.category-actions { display: flex; gap: 3px; }
+.category-actions button {
+  display: grid;
+  place-items: center;
+  width: 31px;
+  height: 31px;
+  padding: 0;
+  color: var(--ink-muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 5px;
+}
+.category-actions button:hover { color: var(--forest); background: white; border-color: var(--line); }
+
+.category-inline-form,
+.category-child-form {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.category-inline-form input { min-width: 100px; }
+.category-inline-form button:last-child,
+.category-child-form button:last-child { padding: 0; width: 39px; color: var(--ink-muted); background: transparent; border: 1px solid var(--line); }
+.category-child-form { min-height: 52px; padding-right: 17px; background: #faf9f5; border-bottom: 1px solid var(--line); }
+.category-child-form input { max-width: 400px; }
 
 .planned-workspace {
   padding-top: 100px;
@@ -1330,7 +1462,7 @@ h1 {
 
 .import-complete dl {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(5, 1fr);
   width: 100%;
   margin: 28px 0;
   color: var(--ink);

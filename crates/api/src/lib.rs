@@ -1,11 +1,11 @@
 use axum::{
     Json, Router,
-    extract::{DefaultBodyLimit, Multipart, State},
+    extract::{DefaultBodyLimit, Multipart, Path, State},
     http::{
         HeaderMap, HeaderValue, StatusCode,
         header::{COOKIE, SET_COOKIE},
     },
-    routing::{get, post},
+    routing::{get, patch, post},
 };
 use elrond_application::{
     AuthError, AuthService, BinderError, BinderService, CatalogError, CatalogService, ImportError,
@@ -43,7 +43,14 @@ pub fn router(state: ApiState) -> Router {
                 .post(upload_document)
                 .layer(DefaultBodyLimit::max(256 * 1024 * 1024)),
         )
-        .route("/api/v1/categories", get(categories))
+        .route("/api/v1/documents/{id}", patch(update_document_catalog))
+        .route("/api/v1/documents/{id}/pdf", get(document_pdf))
+        .route("/api/v1/documents/{id}/original", get(document_original))
+        .route("/api/v1/categories", get(categories).post(create_category))
+        .route(
+            "/api/v1/categories/{id}",
+            patch(rename_category).delete(delete_category),
+        )
         .route("/api/v1/binders/printable.pdf", get(printable_binder))
         .with_state(state)
 }
@@ -147,13 +154,7 @@ async fn import_zip(
     headers: HeaderMap,
     mut multipart: Multipart,
 ) -> Result<Json<impl Serialize>, (StatusCode, Json<Value>)> {
-    let token = session_token(&headers).ok_or_else(unauthorized_response)?;
-    let user = state
-        .auth
-        .current_user(token)
-        .await
-        .map_err(auth_error_response)?
-        .ok_or_else(unauthorized_response)?;
+    let user = catalog_editor(&state, &headers).await?;
     let mut archive_bytes = None;
     let mut root_category = "Imported".to_owned();
 
@@ -232,7 +233,7 @@ async fn upload_document(
     headers: HeaderMap,
     mut multipart: Multipart,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let user = authenticated_user(&state, &headers).await?;
+    let user = catalog_editor(&state, &headers).await?;
     let mut files = Vec::new();
     let mut category_path = Vec::new();
     while let Some(field) = multipart.next_field().await.map_err(|_| {
@@ -300,6 +301,7 @@ async fn upload_document(
         "documentsImported": imported,
         "duplicatesSkipped": duplicates,
         "unsupportedSkipped": unsupported,
+        "invalidSignatureSkipped": 0,
     })))
 }
 
@@ -314,6 +316,185 @@ async fn categories(
         .await
         .map(Json)
         .map_err(catalog_error_response)
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CreateCategoryRequest {
+    name: String,
+    parent_id: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct RenameCategoryRequest {
+    name: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateDocumentCatalogRequest {
+    category_id: Option<String>,
+    tags: Vec<String>,
+}
+
+async fn create_category(
+    State(state): State<ApiState>,
+    headers: HeaderMap,
+    Json(request): Json<CreateCategoryRequest>,
+) -> Result<(StatusCode, Json<impl Serialize>), (StatusCode, Json<Value>)> {
+    let user = catalog_editor(&state, &headers).await?;
+    state
+        .catalog
+        .create_category(&request.name, request.parent_id.as_deref(), &user.id)
+        .await
+        .map(|category| (StatusCode::CREATED, Json(category)))
+        .map_err(catalog_error_response)
+}
+
+async fn rename_category(
+    State(state): State<ApiState>,
+    Path(category_id): Path<String>,
+    headers: HeaderMap,
+    Json(request): Json<RenameCategoryRequest>,
+) -> Result<StatusCode, (StatusCode, Json<Value>)> {
+    let user = catalog_editor(&state, &headers).await?;
+    state
+        .catalog
+        .rename_category(&category_id, &request.name, &user.id)
+        .await
+        .map(|_| StatusCode::NO_CONTENT)
+        .map_err(catalog_error_response)
+}
+
+async fn delete_category(
+    State(state): State<ApiState>,
+    Path(category_id): Path<String>,
+    headers: HeaderMap,
+) -> Result<StatusCode, (StatusCode, Json<Value>)> {
+    let user = catalog_editor(&state, &headers).await?;
+    state
+        .catalog
+        .delete_category(&category_id, &user.id)
+        .await
+        .map(|_| StatusCode::NO_CONTENT)
+        .map_err(catalog_error_response)
+}
+
+async fn update_document_catalog(
+    State(state): State<ApiState>,
+    Path(document_id): Path<String>,
+    headers: HeaderMap,
+    Json(request): Json<UpdateDocumentCatalogRequest>,
+) -> Result<StatusCode, (StatusCode, Json<Value>)> {
+    let user = catalog_editor(&state, &headers).await?;
+    state
+        .catalog
+        .update_document_catalog(
+            &document_id,
+            request.category_id.as_deref(),
+            request.tags,
+            &user.id,
+        )
+        .await
+        .map(|_| StatusCode::NO_CONTENT)
+        .map_err(catalog_error_response)
+}
+
+async fn document_pdf(
+    State(state): State<ApiState>,
+    Path(document_id): Path<String>,
+    headers: HeaderMap,
+) -> Result<(HeaderMap, Vec<u8>), (StatusCode, Json<Value>)> {
+    authenticated_user(&state, &headers).await?;
+    let document = state
+        .catalog
+        .document_content(&document_id, true)
+        .await
+        .map_err(catalog_error_response)?;
+    let stem = std::path::Path::new(&document.filename)
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or("document");
+    content_response(
+        document.content,
+        "application/pdf",
+        &format!("{stem}.pdf"),
+        false,
+    )
+}
+
+async fn document_original(
+    State(state): State<ApiState>,
+    Path(document_id): Path<String>,
+    headers: HeaderMap,
+) -> Result<(HeaderMap, Vec<u8>), (StatusCode, Json<Value>)> {
+    authenticated_user(&state, &headers).await?;
+    let document = state
+        .catalog
+        .document_content(&document_id, false)
+        .await
+        .map_err(catalog_error_response)?;
+    content_response(
+        document.content,
+        &document.media_type,
+        &document.filename,
+        true,
+    )
+}
+
+fn content_response(
+    content: Vec<u8>,
+    media_type: &str,
+    filename: &str,
+    attachment: bool,
+) -> Result<(HeaderMap, Vec<u8>), (StatusCode, Json<Value>)> {
+    let filename: String = filename
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || " ._-()".contains(character) {
+                character
+            } else {
+                '_'
+            }
+        })
+        .take(180)
+        .collect();
+    let filename = if filename.trim().is_empty() {
+        "document".to_owned()
+    } else {
+        filename
+    };
+    let disposition = if attachment { "attachment" } else { "inline" };
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        "content-type",
+        HeaderValue::from_str(media_type).map_err(invalid_content_header)?,
+    );
+    headers.insert(
+        "content-disposition",
+        HeaderValue::from_str(&format!("{disposition}; filename=\"{filename}\""))
+            .map_err(invalid_content_header)?,
+    );
+    headers.insert(
+        "content-length",
+        HeaderValue::from_str(&content.len().to_string()).map_err(invalid_content_header)?,
+    );
+    headers.insert(
+        "cache-control",
+        HeaderValue::from_static("private, no-store"),
+    );
+    headers.insert(
+        "x-content-type-options",
+        HeaderValue::from_static("nosniff"),
+    );
+    Ok((headers, content))
+}
+
+fn invalid_content_header(_error: impl std::error::Error) -> (StatusCode, Json<Value>) {
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(json!({ "error": "The document response could not be created." })),
+    )
 }
 
 async fn printable_binder(
@@ -352,6 +533,21 @@ async fn authenticated_user(
         .await
         .map_err(auth_error_response)?
         .ok_or_else(unauthorized_response)
+}
+
+async fn catalog_editor(
+    state: &ApiState,
+    headers: &HeaderMap,
+) -> Result<elrond_domain::auth::AuthenticatedUser, (StatusCode, Json<Value>)> {
+    let user = authenticated_user(state, headers).await?;
+    if matches!(user.role.as_str(), "admin" | "editor") {
+        Ok(user)
+    } else {
+        Err((
+            StatusCode::FORBIDDEN,
+            Json(json!({ "error": "Editor access is required." })),
+        ))
+    }
 }
 
 fn session_cookie_headers(
@@ -441,11 +637,20 @@ fn binder_error_response(error: BinderError) -> (StatusCode, Json<Value>) {
 }
 
 fn catalog_error_response(error: CatalogError) -> (StatusCode, Json<Value>) {
-    tracing::error!(error = %error, "catalog request failed");
-    (
-        StatusCode::INTERNAL_SERVER_ERROR,
-        Json(json!({ "error": error.to_string() })),
-    )
+    let status = match error {
+        CatalogError::DocumentNotFound | CatalogError::CategoryNotFound => StatusCode::NOT_FOUND,
+        CatalogError::PdfNotReady
+        | CatalogError::CategoryConflict
+        | CatalogError::CategoryNotEmpty => StatusCode::CONFLICT,
+        CatalogError::InvalidContent
+        | CatalogError::InvalidCategoryName
+        | CatalogError::InvalidTags => StatusCode::UNPROCESSABLE_ENTITY,
+        CatalogError::Repository(_) => {
+            tracing::error!(error = %error, "catalog request failed");
+            StatusCode::INTERNAL_SERVER_ERROR
+        }
+    };
+    (status, Json(json!({ "error": error.to_string() })))
 }
 
 async fn health() -> Json<Value> {
