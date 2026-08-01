@@ -38,6 +38,30 @@ pub struct Settings {
     /// Only the presence is recorded here; the key itself is read where it is
     /// used, so it never sits in a struct that might be logged.
     pub stirling_api_key_present: bool,
+    /// Administrator account to create on first run, replacing the setup screen.
+    pub initial_admin: Option<InitialAdmin>,
+}
+
+/// Credentials for the seeded first administrator.
+///
+/// `Debug` is implemented by hand so the password can never reach a log through
+/// a formatted `Settings`.
+#[derive(Clone)]
+pub struct InitialAdmin {
+    /// Account name.
+    pub username: String,
+    /// Plaintext password, hashed at seed time and dropped.
+    pub password: String,
+}
+
+impl std::fmt::Debug for InitialAdmin {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("InitialAdmin")
+            .field("username", &self.username)
+            .field("password", &"<redacted>")
+            .finish()
+    }
 }
 
 impl Settings {
@@ -127,7 +151,21 @@ impl Settings {
         let stirling_url =
             optional("STIRLING_URL")?.map(|url| url.trim_end_matches('/').to_owned());
 
+        let admin_username = optional("ELROND_ADMIN_USERNAME")?;
+        let admin_password = optional("ELROND_ADMIN_PASSWORD")?;
+        let initial_admin = match (admin_username, admin_password) {
+            (Some(username), Some(password)) => Some(InitialAdmin { username, password }),
+            (None, None) => None,
+            // Half a credential is a misconfiguration, and starting anyway would
+            // quietly present the setup screen the operator meant to bypass.
+            _ => bail!(
+                "ELROND_ADMIN_USERNAME and ELROND_ADMIN_PASSWORD must be set together \
+                 or not at all"
+            ),
+        };
+
         Ok(Self {
+            initial_admin,
             bind_address,
             data_dir,
             database_url,

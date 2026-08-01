@@ -151,6 +151,41 @@ impl AuthService {
         self.establish_session(user).await
     }
 
+    /// Creates the first administrator from configuration, without a session.
+    ///
+    /// A no-op when any account already exists: the seed describes the desired
+    /// *starting* state, not a credential sync, so it never mutates a live
+    /// instance — changing the variables later changes nothing, and rotating a
+    /// password still happens through the application. Returns whether an
+    /// account was created.
+    pub async fn seed_first_admin(
+        &self,
+        username: &str,
+        password: &str,
+    ) -> ApplicationResult<bool> {
+        if self.setup_state().await? == SetupState::Ready {
+            return Ok(false);
+        }
+
+        let username = Username::parse(username)?;
+        PasswordPolicy::validate(password)?;
+
+        let password_hash = self.hasher.hash(password.to_owned()).await?;
+        let user = self
+            .users
+            .insert(NewUser {
+                id: UserId::new(),
+                username,
+                role: Role::Admin,
+                password_hash,
+                created_at: self.clock.now(),
+            })
+            .await?;
+
+        tracing::info!(user_id = %user.id, "first administrator seeded from configuration");
+        Ok(true)
+    }
+
     /// Verifies credentials and starts a session.
     pub async fn sign_in(&self, input: SignInInput) -> ApplicationResult<EstablishedSession> {
         // An unparseable username is reported as bad credentials rather than as a

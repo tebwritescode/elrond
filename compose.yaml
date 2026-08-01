@@ -22,6 +22,11 @@ services:
       # Only enable behind a reverse proxy that always overwrites the header.
       # Otherwise it is attacker-controlled and defeats rate limiting.
       ELROND_TRUST_FORWARDED_FOR: 'false'
+      # Optional: create the first administrator at startup instead of showing
+      # the setup screen. Set both together, via a secret or an env file. A
+      # no-op once any account exists.
+      # ELROND_ADMIN_USERNAME: ''
+      # ELROND_ADMIN_PASSWORD: ''
       STIRLING_URL: http://stirling:8080
       # Supply via a secret or an env file; never commit a value.
       # STIRLING_API_KEY: ''

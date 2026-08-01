@@ -109,6 +109,20 @@ async fn main() -> Result<()> {
         settings.session_policy,
     );
 
+    // Seed the first administrator from configuration, before the listener
+    // opens: either the account exists when the first request arrives, or the
+    // process has refused to start with a clear reason. A bad seed must not
+    // boot into the setup screen the operator configured it to bypass.
+    if let Some(admin) = &settings.initial_admin {
+        let created = auth
+            .seed_first_admin(&admin.username, &admin.password)
+            .await
+            .context("could not create the administrator from ELROND_ADMIN_USERNAME")?;
+        if !created {
+            tracing::info!("accounts already exist; ELROND_ADMIN_USERNAME was left untouched");
+        }
+    }
+
     let sweeper = tokio::spawn(sweep_expired_sessions(auth));
 
     let listener = tokio::net::TcpListener::bind(settings.bind_address)

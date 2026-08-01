@@ -111,6 +111,8 @@ The ones worth understanding:
 | `ELROND_SECURE_COOKIES` | `false` | Turn on behind TLS. A `Secure` cookie is silently dropped over plain HTTP, which presents as a sign-in that does nothing. |
 | `ELROND_TRUST_FORWARDED_FOR` | `false` | Only enable behind a proxy that always overwrites the header; otherwise it is attacker-controlled and defeats rate limiting. |
 | `ELROND_ALLOWED_ORIGINS` | empty | Extra CSRF-allowed origins. Needed in development for the Vite dev server. |
+| `ELROND_ADMIN_USERNAME` | unset | With `ELROND_ADMIN_PASSWORD`, creates the first administrator at startup instead of showing the setup screen. A no-op once any account exists, so it never overwrites live credentials. Must be set together or not at all. |
+| `ELROND_ADMIN_PASSWORD` | unset | Password for the seeded administrator, subject to the same 12-character minimum as the setup screen. Supply via a secret or env file. |
 | `STIRLING_URL` | unset | Base URL of the external Stirling-PDF instance. |
 | `STIRLING_API_KEY` | unset | Never logged; only its presence is recorded. |
 
