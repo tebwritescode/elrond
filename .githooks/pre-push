@@ -112,7 +112,13 @@ if git log --no-color -p -E -G "$secret_pattern" $ranges -- . $self 2>/dev/null 
     status=1
 fi
 
-identity_pattern='@gmail\.com'
+# Personal-mailbox domains only. Site-specific identifiers (a personal username,
+# a real name) must NOT be written here — this file is published. Put them in
+# .git/publish-patterns-identity (one extended regex per file, `|`-joined), which
+# lives under .git/ and therefore cannot be committed.
+identity_pattern='@gmail\.com|@googlemail\.com|@yahoo\.[a-z.]+|@hotmail\.[a-z.]+|@outlook\.[a-z.]+|@live\.[a-z.]+|@icloud\.com|@me\.com|@proton\.me|@protonmail\.com|@aol\.com|@gmx\.[a-z.]+'
+extra_identity=$(cat "$(git rev-parse --git-dir)/publish-patterns-identity" 2>/dev/null || true)
+[ -n "$extra_identity" ] && identity_pattern="$identity_pattern|$extra_identity"
 # shellcheck disable=SC2086
 if git log --no-color -p -E -G "$identity_pattern" $ranges -- . $self 2>/dev/null \
     | grep -Eq "$identity_pattern"; then
@@ -132,7 +138,12 @@ fi
 
 # ------------------------------------------------- blocked on public remotes only
 if [ "$is_public" -eq 1 ]; then
-    internal_pattern='10\.[0-9]{1,3}(\.[0-9]{1,3}){2}|100\.[0-9]{1,3}(\.[0-9]{1,3}){2}|tailscale'
+    # Generic private-address shapes only. Site-specific literals (real hostnames,
+    # domains, exact addresses) must NOT be written here — this file is published.
+    # Put them in .git/publish-patterns-internal, which cannot be committed.
+    internal_pattern='10\.[0-9]{1,3}(\.[0-9]{1,3}){2}|100\.[0-9]{1,3}(\.[0-9]{1,3}){2}|192\.168\.[0-9]{1,3}\.[0-9]{1,3}|172\.(1[6-9]|2[0-9]|3[01])\.[0-9]{1,3}\.[0-9]{1,3}|tailscale|[a-z0-9-]+\.lan\b|[a-z0-9-]+\.internal\b'
+    extra_internal=$(cat "$(git rev-parse --git-dir)/publish-patterns-internal" 2>/dev/null || true)
+    [ -n "$extra_internal" ] && internal_pattern="$internal_pattern|$extra_internal"
 
     # Only the tree being published is checked here, not the whole history. The
     # convention is that GitHub receives a sanitised snapshot; blocking on history

@@ -114,6 +114,22 @@ Two tiers:
 `git push --no-verify` bypasses it. If you reach for that, fix the finding
 instead.
 
+**The hook ships generic patterns only.** The committed file knows the *shapes*
+of private data (RFC 1918 and CGNAT addresses, personal-mailbox domains,
+credential prefixes) but never a site-specific literal — the hook is public, so
+a real hostname or username written into its patterns would itself be the leak
+it exists to prevent. Site-specific literals go in two untracked files that the
+hook reads at run time, safely inside `.git/` where they cannot be committed:
+
+```bash
+# one extended regex per file; terms joined with |
+printf '%s\n' 'my-username|my\.domain\.example' > .git/publish-patterns-identity
+printf '%s\n' 'my-hostname|10\.1\.2\.3'         > .git/publish-patterns-internal
+```
+
+Recreate them after every fresh clone, alongside `git config core.hooksPath
+.githooks`.
+
 ## Workflow templates for the primary implementation
 
 Ready to copy onto the `main` branch, already carrying the correct trigger scope
